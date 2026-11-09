@@ -153,12 +153,12 @@ import wheelgap
 
 targets = wheelgap.make_targets(python="3.13", platforms=["linux-aarch64", "musl-aarch64"])
 
-result = wheelgap.check_package("numpy", "2.3.4", targets)   # looks the files up on PyPI
-result.ok        # True if every target has a wheel
-result.gaps      # the targets that don't
-result.to_dict() # {"name": ..., "results": {"3.13 musl-aarch64": "wheel", ...}}
+result = wheelgap.check_package("numpy", "2.3.4", targets)  # looks the files up on PyPI
+result.ok  # True if every target has a wheel
+result.gaps  # the targets that don't
+result.to_dict()  # {"name": ..., "results": {"3.13 musl-aarch64": "wheel", ...}}
 
-for r in wheelgap.check_lockfile("uv.lock", targets):          # markers and the uv graph respected
+for r in wheelgap.check_lockfile("uv.lock", targets):  # markers and the uv graph respected
     print(r.name, r.version, [t.platform for t in r.gaps])
 ```
 
