@@ -35,6 +35,11 @@ class Row:
         return all(s in (Status.WHEEL, Status.NOT_NEEDED) for s in self.results.values())
 
     @property
+    def fails_install(self) -> bool:
+        """True if some target can't install this package at all, or it couldn't be checked."""
+        return any(s in (Status.MISSING, Status.UNKNOWN) for s in self.results.values())
+
+    @property
     def needed(self) -> bool:
         return any(s is not Status.NOT_NEEDED for s in self.results.values())
 

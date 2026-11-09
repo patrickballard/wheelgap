@@ -78,14 +78,20 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--explain", action="store_true", help="for each gap, list the wheels that were rejected and why")
     p.add_argument("--json", action="store_true", help="print JSON instead of a table")
     p.add_argument("--exit-zero", action="store_true", help="exit 0 even when gaps are found")
+    p.add_argument(
+        "--fail-on",
+        choices=FAIL_ON,
+        help="exit 1 on any gap ('source', the default) or only when a package can't install ('missing')",
+    )
     p.add_argument("--color", choices=["auto", "always", "never"], default="auto")
     p.add_argument("--list-targets", action="store_true", help="list platform names and exit")
     p.add_argument("-V", "--version", action="version", version=f"wheelgap {__version__}")
     return p.parse_args(argv)
 
 
+FAIL_ON = ("source", "missing")
 LIST_KEYS = ("python", "targets")
-STR_KEYS = ("glibc", "musl", "macos")
+STR_KEYS = ("glibc", "musl", "macos", "fail-on")
 
 
 def find_pyproject(inputs: list[str]) -> Path | None:
@@ -114,6 +120,8 @@ def load_config(path: Path) -> dict:
         elif key in STR_KEYS:
             if not isinstance(value, str):
                 raise SourceError(f'{path}: [tool.wheelgap] {key} must be a string like "2.31"')
+            if key == "fail-on" and value not in FAIL_ON:
+                raise SourceError(f"{path}: [tool.wheelgap] fail-on must be one of: {', '.join(FAIL_ON)}")
         else:
             raise SourceError(f"{path}: unknown key in [tool.wheelgap]: {key}")
         config[key] = value
@@ -275,6 +283,7 @@ def main(argv: list[str] | None = None) -> int:
             args.macos or config.get("macos", "14.0"),
         )
         sources = load_inputs(args.inputs or ["."])
+        fail_on = args.fail_on or config.get("fail-on", "source")
     except (TargetError, SourceError, DockerfileError, OSError) as e:
         print(f"wheelgap: error: {e}", file=sys.stderr)
         return 2
@@ -289,10 +298,13 @@ def main(argv: list[str] | None = None) -> int:
     rows.sort(key=lambda r: r.package.key)
     gaps = [r for r in rows if not r.ok]
     source_labels = [s.label for s in sources]
+    # With --fail-on missing, source builds are accepted; missing and unknown packages still fail.
+    failing = gaps if fail_on == "source" else [r for r in gaps if r.fails_install]
+    code = 0 if args.exit_zero or not failing else 1
 
     if args.json:
         print(report_json(rows, targets, source_labels, skipped, args.explain))
-        return 0 if args.exit_zero or not gaps else 1
+        return code
 
     style = Style(use_color(args.color))
     pys = ", ".join(dict.fromkeys(t.python for t in targets))
@@ -343,7 +355,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{style.bold(f'{len(gaps)} of {len(rows)} packages')} {verb} gaps: " + ", ".join(parts) + ".")
     if not args.explain:
         print(style.dim("Run with --explain to see which wheels were rejected and why."))
-    return 0 if args.exit_zero else 1
+    if gaps and not failing and not args.exit_zero:
+        print(style.dim("Source builds are allowed (--fail-on missing), so this run passes."))
+    return code
 
 
 if __name__ == "__main__":  # pragma: no cover
