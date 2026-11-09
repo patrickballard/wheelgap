@@ -46,18 +46,18 @@ The PR template has a short checklist:
 
 ## What to expect
 
-- A review within hours, usually. If something needs changing, the maintainer usually pushes the fix to your branch and says what changed, rather than sending you a list. So leave "Allow edits by maintainers" on.
+- A review within hours, usually. Most PRs need a small change or two, which is normal: the maintainer often pushes the fix to your branch and says what changed, so leave "Allow edits by maintainers" on. If you'd rather make the changes yourself, say so in the PR.
 - PRs are squash-merged, so don't worry about tidying your commit history. You stay the author of the commit.
-- You're credited in the CHANGELOG and the release notes, and you appear in the README's contributors section.
+- You're credited in the CHANGELOG and the release notes, and you appear in the thanks at the end of the README.
 - When your PR is merged, we suggest another issue that fits, if you'd like one.
 
 ## AI-assisted contributions
 
 Using AI tools (coding agents, bug-fix bots and the like) is fine, and [AGENTS.md](AGENTS.md) helps them follow the house rules. We ask three things:
 
-- **Say so in the PR description**, with the tool's name. It doesn't count against you; it tells the reviewer where to look harder.
+- **Say so in the PR description**, with the tool's name. It doesn't count against you; it just helps the reviewer know what to check.
 - **You're responsible for the diff.** Read it, run the checks yourself, and be ready to explain what it does, the same as for code you write by hand.
-- **One issue per PR**, and only for issues that are open. Pull requests that look generated and unchecked, or that change things nobody asked for, may be closed.
+- **One issue per PR.** Small fixes can skip the issue (see above); anything bigger needs an open issue or an idea agreed in Discussions. Pull requests that fail the checks, that the author can't explain, or that change things nobody asked for may be closed.
 
 ## Reporting a wrong result
 

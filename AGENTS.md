@@ -62,4 +62,5 @@ uv run --group dev pytest
 - **The first PR opened for an issue is the one we merge.** A comment doesn't reserve an issue, so check for an existing PR before you start, and open yours early (a draft is fine).
 - In the PR description, use `Closes #N` only if the PR finishes the issue; otherwise write `Part of #N`.
 - The maintainer may push fixes to your branch before merging, so leave "Allow edits by maintainers" on.
+- Say in the PR description which AI tool helped (e.g. "Made with Codex"). The person opening the PR must have read and run the change. One issue per PR.
 - Changes to `.github/`, `action.yml`, `pyproject.toml`, `uv.lock` or `src/wheelgap/pypi.py` get extra scrutiny, so expect them to take longer.

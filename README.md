@@ -248,21 +248,21 @@ Sites like [pyreadiness.org](https://pyreadiness.org) and [free-threaded wheels]
 
 wheelgap is growing into **caniuse for Python wheels**: an open map of which packages have wheels for which platforms. The CLI stays focused, and around it come a nightly tracker of the most-used PyPI packages, a community knowledge base of workarounds, and campaigns to help upstream projects ship missing wheels. **[Read the roadmap and join the discussion →](https://github.com/wheelgap/wheelgap/discussions/43)**
 
-Next up for the CLI, and all open for contributors:
+Next up for the CLI, each with a first step written up and no PR yet:
 
-- "nearest version with a wheel" hints (#20)
-- private indexes through the simple API (#19)
-- `wheelgap diff`: the new gaps between two lockfiles, for PR comments (#51)
-- checking only the extras and dependency groups you install (#87)
+- "nearest version with a wheel" hints ([#20](https://github.com/wheelgap/wheelgap/issues/20))
+- `wheelgap diff`: the new gaps between two lockfiles, for PR comments ([#51](https://github.com/wheelgap/wheelgap/issues/51))
+- caching index lookups between runs ([#65](https://github.com/wheelgap/wheelgap/issues/65))
+- version ranges: picking the newest release that supports each target's Python ([#84](https://github.com/wheelgap/wheelgap/issues/84))
 
-The [roadmap label](https://github.com/wheelgap/wheelgap/labels/roadmap) has the rest.
+The [roadmap](https://github.com/wheelgap/wheelgap/labels/roadmap) and [help wanted](https://github.com/wheelgap/wheelgap/labels/help%20wanted) labels have more.
 
-### Contributing
+## Contributing
 
 Contributions are welcome, and pull requests usually get a review within hours.
 
 - **New here?** Issues labelled [good first issue](https://github.com/wheelgap/wheelgap/labels/good%20first%20issue) say which files to change and what to test.
-- **Done one or two?** [help wanted](https://github.com/wheelgap/wheelgap/labels/help%20wanted) issues are bigger and more interesting.
+- **Done one or two?** [help wanted](https://github.com/wheelgap/wheelgap/labels/help%20wanted) issues are bigger, and a good next step.
 
 [CONTRIBUTING.md](CONTRIBUTING.md) has the 3-command dev setup, or you can start in the browser with no setup:
 
@@ -270,7 +270,7 @@ Contributions are welcome, and pull requests usually get a review within hours.
 
 Questions are welcome in [Discussions](https://github.com/wheelgap/wheelgap/discussions).
 
-## Contributors
+## Thanks
 
 wheelgap is created and maintained by [@patrickballard](https://github.com/patrickballard), with a lot of help from these people. Thank you, all of you!
 
