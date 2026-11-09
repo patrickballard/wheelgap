@@ -79,6 +79,19 @@ def test_manylinux_stops_at_2_17_outside_x86_and_i686():
     assert "manylinux_2_5_x86_64" in manylinux_platforms("x86_64", (2, 28))
     assert "manylinux_2_12_x86_64" in manylinux_platforms("x86_64", (2, 28))
     assert "manylinux_2_5_i686" in manylinux_platforms("i686", (2, 28))
+    # pip's 2.17 floor is a glibc-major-2 rule: a future major 3 starts fresh at every minor
+    assert "manylinux_3_12_aarch64" in manylinux_platforms("aarch64", (3, 20))
+
+
+def test_manylinux_floor_boundary_is_exact_outside_x86():
+    # exact lists at the floor: glibc 2.17 still has its own tag and the 2014 alias; 2.16 is below
+    # every manylinux pip counts on aarch64, so only plain linux wheels stay
+    assert t("linux-aarch64", glibc=(2, 17)).platform_tags() == [
+        "manylinux_2_17_aarch64",
+        "manylinux2014_aarch64",
+        "linux_aarch64",
+    ]
+    assert t("linux-aarch64", glibc=(2, 16)).platform_tags() == ["linux_aarch64"]
 
 
 @pytest.mark.parametrize(

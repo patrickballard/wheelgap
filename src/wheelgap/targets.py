@@ -203,6 +203,9 @@ ANDROID_FLOOR = 16  # the oldest API level packaging (and so pip) considers
 
 ANDROID_CEILING = 99  # far above any real API level (36 in 2025); pip tries every level down to 16
 
+MANYLINUX_FLOOR = (2, 17)  # the glibc manylinux2014 was built against (#79)
+MANYLINUX_X86_ARCHES = ("x86_64", "i686")  # the arches pip traces manylinux down to glibc 2.5 on
+
 
 def parse_api_level(spec: str | int) -> int:
     try:
@@ -227,8 +230,9 @@ def manylinux_platforms(arch: str, glibc: tuple[int, int]) -> list[str]:
     major, minor = glibc
     out = []
     # pip accepts manylinux floors only down to 2.5 on x86_64 and i686; every other arch's first
-    # manylinux was 2.17 (manylinux2014), and pip takes no manylinux tag below that (#79).
-    oldest = 5 if arch in ("x86_64", "i686") else 17
+    # manylinux was 2.17 (manylinux2014), and pip takes no manylinux tag below that (#79). The
+    # floor applies only where that first manylinux exists: glibc major 2.
+    oldest = MANYLINUX_FLOOR[1] if major == MANYLINUX_FLOOR[0] and arch not in MANYLINUX_X86_ARCHES else 5
     for m in range(minor, oldest - 1, -1):
         out.append(f"manylinux_{major}_{m}_{arch}")
         legacy = _LEGACY_MANYLINUX.get(m)
