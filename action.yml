@@ -32,9 +32,11 @@ runs:
         pipx run --spec "$GITHUB_ACTION_PATH" wheelgap $WHEELGAP_ARGS
         code=$?
         # The summary is a second, never-failing run; the step's result is the real run's exit code.
-        # Exit code 2 means bad input, which the log above already explains.
+        # Exit code 2 means bad input, which the log above already explains. The extra flags go first
+        # so a `--` in args can't turn them into package names, and only a real Markdown report is
+        # appended (not help, --version or --list-targets output).
         if [ "$WHEELGAP_SUMMARY" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ "$code" -le 1 ]; then
-          pipx run --spec "$GITHUB_ACTION_PATH" wheelgap $WHEELGAP_ARGS --markdown --no-quiet --exit-zero \
-            >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          report=$(pipx run --spec "$GITHUB_ACTION_PATH" wheelgap --markdown --no-quiet --exit-zero $WHEELGAP_ARGS 2>/dev/null) \
+            && [[ "$report" == "### wheelgap"* ]] && printf '%s\n' "$report" >> "$GITHUB_STEP_SUMMARY"
         fi
         exit "$code"

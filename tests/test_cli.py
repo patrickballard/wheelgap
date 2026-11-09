@@ -421,7 +421,8 @@ def test_output_is_utf8_on_a_cp1252_pipe(monkeypatch, capsys):
     assert stream.encoding.lower().replace("-", "") == "utf8"
 
 
-def test_markdown_report(capsys, fake_pypi):
+def test_markdown_report(capsys, fake_pypi, monkeypatch):
+    monkeypatch.setenv("FORCE_COLOR", "1")  # as in the Action: Markdown must still have no colour codes
     code, out, err = run(
         capsys,
         "fastlib==2.0.0",
@@ -436,7 +437,7 @@ def test_markdown_report(capsys, fake_pypi):
     assert code == 1 and not err
     lines = out.splitlines()
     assert lines[0] == "### wheelgap: 2 of 3 packages have gaps"
-    assert "| package | version | linux-x86_64 | win-amd64 |" in lines
+    assert "| package | version | linux-x86\\_64 | win-amd64 |" in lines
     assert "| --- | --- | --- | --- |" in lines
     assert "| fastlib | 2.0.0 | ✓ | ● source |" in lines
     assert "| nowheels | 0.9 | ● source | ● source |" in lines
@@ -471,3 +472,23 @@ def test_markdown_and_json_conflict(capsys):
         main(["six", "--json", "--markdown"])
     assert exc.value.code == 2
     assert "--json and --markdown" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        main(["--list-targets", "--json", "--markdown"])
+    assert "--json and --markdown" in capsys.readouterr().err
+
+
+def test_markdown_escapes_and_fail_on_missing(capsys, fake_pypi, tmp_path):
+    req = tmp_path / "req_a*b*.txt"
+    req.write_text("nowheels==0.9\n-e ./vendor/__internal__/\n")
+    code, out, _ = run(capsys, str(req), "-p", "3.13", "-t", "win-amd64", "--markdown", "--fail-on", "missing")
+    assert code == 0
+    assert "req\\_a\\*b\\*.txt" in out
+    assert "\\_\\_internal\\_\\_" in out
+    assert "Source builds are allowed (`--fail-on missing`), so this run passes." in out
+    # The Action's summary run adds --exit-zero; the note depends on --fail-on, not on that.
+    code, out2, _ = run(capsys, str(req), "-p", "3.13", "-t", "win-amd64", "--markdown", "--exit-zero")
+    assert "Source builds are allowed" not in out2
+    _, out3, _ = run(
+        capsys, str(req), "-p", "3.13", "-t", "win-amd64", "--markdown", "--fail-on", "missing", "--exit-zero"
+    )
+    assert "Source builds are allowed" in out3

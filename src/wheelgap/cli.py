@@ -416,8 +416,12 @@ def gap_summary(gaps: list[Row], total: int, style: Style) -> str:
     return f"{style.bold(f'{len(gaps)} of {total} packages')} {verb} gaps: " + ", ".join(parts) + "."
 
 
+_MD_SPECIAL = re.compile(r"([\\`*_\[\]<>#|~])")
+
+
 def _md(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("|", "\\|")
+    """Escape text so Markdown shows it literally (paths like ./__internal__/ stay as written)."""
+    return _MD_SPECIAL.sub(r"\\\1", text)
 
 
 def render_markdown(
@@ -427,13 +431,15 @@ def render_markdown(
     skipped: list[Package],
     args: argparse.Namespace,
     pyodide_lock: PyodideLock | None,
+    source_allowed: bool = False,
 ) -> list[str]:
     """The same report as the text output, as GitHub-flavoured Markdown (for a job summary or a PR comment)."""
     plain = Style(False)
     gaps = [r for r in rows if not r.ok]
     n_t = len(targets)
     if gaps:
-        out = [f"### wheelgap: {len(gaps)} of {len(rows)} packages {'has' if len(gaps) == 1 else 'have'} gaps", ""]
+        noun = "package" if len(rows) == 1 else "packages"
+        out = [f"### wheelgap: {len(gaps)} of {len(rows)} {noun} {'has' if len(gaps) == 1 else 'have'} gaps", ""]
     else:
         out = [
             f"### wheelgap: every package has a wheel for {'all ' if n_t > 1 else ''}{n_t} target{'s' * (n_t > 1)}",
@@ -460,6 +466,8 @@ def render_markdown(
 
     if gaps:
         out += [gap_summary(gaps, len(rows), plain), ""]
+        if source_allowed:
+            out += ["Source builds are allowed (`--fail-on missing`), so this run passes.", ""]
     bundled = [r for r in rows if Status.BUNDLED in r.results.values()]
     if bundled and pyodide_lock:
         out += [_md(bundled_line(bundled, pyodide_lock)), ""]
@@ -490,6 +498,10 @@ def main(argv: list[str] | None = None) -> int:
                 reconfigure(errors="replace")
     parser = make_parser()
     args = parser.parse_args(argv)
+    if args.json and args.markdown:
+        parser.error("--json and --markdown can't be used together")
+    if args.list_targets and args.markdown:
+        parser.error("--list-targets has no Markdown form (use --json)")
     try:
         if args.list_targets:
             pyproject = find_pyproject(args.inputs)
@@ -498,8 +510,6 @@ def main(argv: list[str] | None = None) -> int:
         pyproject = find_pyproject(args.inputs)
         config = load_config(pyproject) if pyproject else {}
         quiet = args.quiet if args.quiet is not None else config.get("quiet", False)
-        if args.json and args.markdown:
-            parser.error("--json and --markdown can't be used together")
         # Quiet only changes the text output, so it can't clash with --explain when printing JSON or Markdown.
         if quiet and args.explain and not (args.json or args.markdown):
             parser.error("--explain cannot be used with quiet mode (--quiet or quiet = true; --no-quiet turns it off)")
@@ -556,7 +566,8 @@ def main(argv: list[str] | None = None) -> int:
         return code
 
     if args.markdown:
-        print("\n".join(render_markdown(rows, targets, source_labels, skipped, args, pyodide_lock)))
+        source_allowed = bool(gaps) and not failing  # judged on --fail-on alone, not --exit-zero
+        print("\n".join(render_markdown(rows, targets, source_labels, skipped, args, pyodide_lock, source_allowed)))
         return code
 
     style = Style(use_color(args.color))
