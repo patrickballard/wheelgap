@@ -26,6 +26,7 @@ ARCHES = {
 WINDOWS_VARIANTS = ("windowsservercore", "nanoserver")
 IMAGE_NAMES = ("python", "library/python", "docker.io/library/python", "docker.io/python")
 UV_IMAGE = "ghcr.io/astral-sh/uv"
+UV_ARCHES = {"x86_64", "aarch64"}
 
 _TAG_RE = re.compile(r"^(\d+)\.(\d+)(?:\.\d+)?(?:(?:a|b|rc)\d+)?(?:-(.+))?$")
 _UV_TAG_PREFIX_RE = re.compile(r"^(?:\d+\.\d+(?:\.\d+)?-)?python")
@@ -113,6 +114,8 @@ def parse_image(image: str, platform: str | None = None) -> ImageTarget:
         if platform.lower() not in ARCHES:
             raise DockerfileError(f"--platform={platform}: only {', '.join(ARCHES)} are supported")
         arch = ARCHES[platform.lower()]
+        if name == UV_IMAGE and arch not in UV_ARCHES:
+            raise DockerfileError(f"{image}: Astral's uv images are only published for linux/amd64 and linux/arm64")
     return ImageTarget(python, f"{family}-{arch}", glibc, musl)
 
 

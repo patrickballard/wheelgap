@@ -49,6 +49,7 @@ def test_parse_from(line, expected):
         ("python:${PY}-slim", "build arguments"),
         ("--platform=$BUILDPLATFORM python:3.13", "build arguments"),
         ("--platform=linux/386 python:3.13", "only linux/amd64"),
+        ("--platform=linux/s390x ghcr.io/astral-sh/uv:python3.13-bookworm-slim", "only published for linux/amd64"),
         ("python:3.13-slim-buster", "unknown image variant 'buster'"),
     ],
 )

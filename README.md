@@ -184,7 +184,7 @@ for r in wheelgap.check_lockfile("uv.lock", targets):  # markers and the uv grap
 python -m wheelgap.scan --top 5000 --out coverage.json
 ```
 
-This checks the latest release of the most-downloaded packages (from [top-pypi-packages](https://hugovk.dev/top-pypi-packages/)) against every platform, for Python 3.13, 3.14 and 3.14t by default, and writes one JSON file with per-platform totals. It's the data behind the [coverage tracker on the roadmap](https://github.com/wheelgap/wheelgap/discussions/43).
+This checks the latest release of the most-downloaded packages (from [top-pypi-packages](https://hugovk.dev/top-pypi-packages/)) against the eight common platforms (and Pyodide), for Python 3.13, 3.14 and 3.14t by default, and writes one JSON file with per-platform totals. It's the data behind the [coverage tracker on the roadmap](https://github.com/wheelgap/wheelgap/discussions/43).
 
 ## How it works
 

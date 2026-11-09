@@ -201,7 +201,8 @@ class Target:
         if family == "pyodide":
             return list(PYODIDE_PLATFORMS[(self.major, self.minor)])
         if family == "manylinux":
-            return manylinux_platforms(arch, self.glibc)
+            # pip also takes plain linux_<arch> wheels; PyPI only allows them for 32-bit ARM (Raspberry Pi).
+            return manylinux_platforms(arch, self.glibc) + [f"linux_{arch}"]
         if family == "musllinux":
             return musllinux_platforms(arch, self.musl)
         if family == "macos":
