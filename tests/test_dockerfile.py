@@ -176,24 +176,6 @@ def test_scratch_after_stages_keeps_the_usual_error(tmp_path):
         read_dockerfile(_dockerfile(tmp_path, text))
 
 
-def test_heredoc_bodies_are_not_from_lines(tmp_path):
-    text = (
-        "FROM python:3.13-alpine AS base\n"
-        "RUN <<EOF python\n"
-        "from os import path\n"
-        "EOF\n"
-        "COPY <<-'conf' <<\"other\" /etc/\n"
-        "\tFROM nothing\n"
-        "\tconf\n"
-        "FROM elsewhere\n"
-        "other\n"
-        'RUN cat <<< "FROM here"\n'
-        "FROM base\n"
-    )
-    assert last_from(text) == "base"
-    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.13", "musl-x86_64", musl="1.2")
-
-
 @pytest.mark.parametrize(
     "line",
     [
@@ -207,30 +189,10 @@ def test_heredoc_bodies_are_not_from_lines(tmp_path):
         "RUN cat <<<word",
     ],
 )
-def test_things_that_only_look_like_heredocs(tmp_path, line):
-    # None of these open a heredoc in Docker, so the final FROM must still be found.
+def test_lines_with_heredoc_like_text_never_hide_the_final_from(tmp_path, line):
+    # wheelgap doesn't parse heredocs, so whatever these mean to Docker, the final FROM is still found.
     text = f"FROM python:3.13-alpine AS base\n{line}\nFROM python:3.12-slim\n"
     assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.12", "linux-x86_64")
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        "RUN <<END-OF-SCRIPT\nfrom a import b\nEND-OF-SCRIPT\n",
-        "COPY <<EOF.py /a.py\nfrom a import b\nEOF.py\n",
-        "RUN 3<<EOF cat <&3\nfrom a import b\nEOF\n",
-        "ONBUILD RUN <<EOF\nfrom a import b\nEOF\n",
-        "RUN <<EOF\necho foo \\\nEOF\n",  # a backslash inside a body doesn't join lines
-    ],
-)
-def test_real_heredocs_end_where_docker_ends_them(tmp_path, body):
-    text = f"FROM python:3.13-alpine AS base\n{body}FROM python:3.12-slim\n"
-    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.12", "linux-x86_64")
-
-
-def test_unterminated_heredoc_is_an_error(tmp_path):
-    with pytest.raises(DockerfileError, match="heredoc <<EOF is never closed"):
-        read_dockerfile(_dockerfile(tmp_path, "FROM python:3.13\nRUN <<EOF\necho\nFROM python:3.12\n"))
 
 
 def test_unknown_stage_lists_only_earlier_stages(tmp_path):
@@ -240,3 +202,46 @@ def test_unknown_stage_lists_only_earlier_stages(tmp_path):
     # A stage built on a non-python image gets the usual image error, not a stage one.
     with pytest.raises(DockerfileError, match="alpine: only the official python images"):
         read_dockerfile(_dockerfile(tmp_path, "FROM alpine AS base\nFROM base\n"))
+
+
+def test_python_imports_in_heredocs_are_not_from_lines(tmp_path):
+    text = (
+        "FROM python:3.12-slim AS app\n"
+        "COPY . /app\n"
+        "FROM python:3.13-alpine\n"
+        "COPY --from=app /app /app\n"
+        "RUN python - <<EOF\n"
+        "from app import main\n"
+        "EOF\n"
+    )
+    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.13", "musl-x86_64", musl="1.2")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A blank line inside a continued instruction is skipped, so FROM base is part of the RUN.
+        "FROM python:3.12-slim AS base\nFROM python:3.13-alpine\nRUN rm -rf /tmp/* \\\n\nFROM base\n",
+        # The same with a comment line in between.
+        "FROM python:3.12-slim AS base\nFROM python:3.13-alpine\nRUN rm -rf /tmp/* \\\n# note\nFROM base\n",
+        # With `# escape=` + "`", a trailing backtick continues the line (and a backslash doesn't).
+        "# escape=`\nFROM python:3.12-windowsservercore AS base\nFROM python:3.13-alpine\nRUN echo `\nFROM base\n",
+    ],
+)
+def test_continuations_like_docker(tmp_path, text):
+    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.13", "musl-x86_64", musl="1.2")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A comment ending in a backslash doesn't continue onto the next line.
+        "FROM python:3.13-alpine AS app\n# path C:\\\nFROM python:3.12-slim\n",
+        # A doubled backslash is an escaped backslash, not a continuation.
+        "FROM python:3.13-alpine AS app\nRUN echo \\\\\nFROM python:3.12-slim\n",
+        # Under `# escape=` + "`", a trailing backslash is just a character.
+        "# escape=`\nFROM python:3.13-alpine AS app\nRUN dir C:\\\nFROM python:3.12-slim\n",
+    ],
+)
+def test_lines_that_do_not_continue(tmp_path, text):
+    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.12", "linux-x86_64")

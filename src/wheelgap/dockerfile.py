@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,65 +38,47 @@ class ImageTarget:
     musl: str | None = None
 
 
-# BuildKit's heredoc rule: a shell-form word of RUN, COPY or ADD that starts with `<<` (or `<<-`),
-# optionally after a file descriptor number. The rest of the word is the delimiter.
-_HEREDOC_WORD_RE = re.compile(r"^\d*<<(-?)([^<]+)$")
-_HEREDOC_INSTRUCTIONS = {"RUN", "COPY", "ADD"}
+_DIRECTIVE_RE = re.compile(r"^#\s*([A-Za-z]+)\s*=\s*(\S*)\s*$")
+# A Python import, e.g. inside a `RUN <<EOF` heredoc: never a valid FROM instruction.
+_PY_IMPORT_RE = re.compile(r"^from\s+\S+\s+import\s")
 
 
-def _heredocs(instruction: str) -> list[tuple[bool, str]]:
-    """The heredocs an instruction opens, as (strip leading tabs, delimiter)."""
-    words = instruction.split(None, 2)
-    if words and words[0].upper() == "ONBUILD":
-        words = words[1:2] + (words[2].split(None, 1) if len(words) > 2 else [])
-    if len(words) < 2 or words[0].upper() not in _HEREDOC_INSTRUCTIONS or words[1].startswith("["):
-        return []  # other instructions and exec (JSON) form have no heredocs
-    lexer = shlex.shlex(words[1], posix=False)
-    lexer.whitespace_split = True
-    try:
-        tokens = list(lexer)
-    except ValueError:  # an unbalanced quote: not something to guess about
-        return []
-    found = []
-    for token in tokens:
-        if m := _HEREDOC_WORD_RE.match(token):
-            delimiter = m.group(2)
-            if len(delimiter) >= 2 and delimiter[0] == delimiter[-1] and delimiter[0] in "'\"":
-                delimiter = delimiter[1:-1]
-            found.append((bool(m.group(1)), delimiter))
-    return found
+def _escape_char(lines: list[str]) -> str:
+    """The `# escape=` parser directive (\\ by default, ` on Windows images)."""
+    for line in lines:
+        m = _DIRECTIVE_RE.match(line.strip())
+        if not m:
+            break  # directives must come first, before any comment, blank line or instruction
+        if m.group(1).lower() == "escape" and m.group(2) in ("`", "\\"):
+            return m.group(2)
+    return "\\"
 
 
 def _from_lines(text: str) -> list[str]:
-    """The arguments of every FROM instruction in order, with line continuations joined.
+    """The arguments of every FROM instruction in order, with line continuations joined as Docker joins them.
 
-    Heredoc bodies (`RUN <<EOF ... EOF`) are skipped, so a Python `from x import y` in one isn't
-    read as a FROM. Bodies are read line by line as written, as Docker does.
+    Python `from x import y` lines (from a heredoc) are skipped. Other heredoc contents aren't parsed,
+    so a line in one that looks exactly like a FROM instruction would still be read as one.
     """
+    lines = [raw.rstrip("\r") for raw in text.splitlines()]
+    esc = re.escape(_escape_char(lines))
+    continued = re.compile(rf"(?<!{esc}){esc}[ \t]*$")  # one escape char at the end, not two
     found = []
-    pending: list[tuple[bool, str]] = []  # heredocs still open
-    parts: list[str] = []  # an instruction continued with a trailing backslash
-    for raw in text.splitlines():
-        line = raw.rstrip("\r")
-        if pending:
-            strip_tabs, delimiter = pending[0]
-            if (line.lstrip("\t") if strip_tabs else line) == delimiter:
-                pending.pop(0)
-            continue
-        if parts and line.lstrip().startswith("#"):
-            continue  # comments inside a continued instruction are dropped
-        if line.rstrip().endswith("\\"):
-            parts.append(line.rstrip()[:-1])
+    parts: list[str] = []  # an instruction continued onto the next line
+    for line in lines:
+        stripped = line.strip()
+        if parts and (not stripped or stripped.startswith("#")):
+            continue  # Docker skips blank and comment lines inside a continued instruction
+        if not parts and stripped.startswith("#"):
+            continue  # a comment never continues, even if it ends in the escape char
+        if m := continued.search(line):
+            parts.append(line[: m.start()])
             continue
         instruction = " ".join([*parts, line]).strip()
         parts = []
         words = instruction.split(None, 1)
-        if len(words) == 2 and words[0].upper() == "FROM":
+        if len(words) == 2 and words[0].upper() == "FROM" and not _PY_IMPORT_RE.match(instruction):
             found.append(words[1])
-        elif words and not words[0].startswith("#"):
-            pending = _heredocs(instruction)
-    if pending:
-        raise DockerfileError(f"heredoc <<{pending[0][1]} is never closed")
     return found
 
 
