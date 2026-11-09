@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- `--dockerfile` follows named stages: with `FROM python:3.13-alpine AS base` and later `FROM base AS runtime`, the final stage is checked as `python:3.13-alpine`, through any chain of stages. A `--platform` on a later `FROM` wins, and a misspelt stage name gets a clear error. (#10)
+- `--dockerfile` follows named stages: with `FROM python:3.13-alpine AS base` and later `FROM base AS runtime`, the final stage is checked as `python:3.13-alpine`, through any chain of stages, keeping the platform that stage was built for (as Docker does). A name that's neither an earlier stage nor a python image gets a clear error, and Python `from ... import` lines inside `RUN <<EOF` heredocs are no longer mistaken for `FROM`. (#10)
 
 ## 0.5.0 (2026-11-09)
 

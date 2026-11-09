@@ -96,7 +96,7 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--dockerfile",
         metavar="PATH",
-        help="take -p/-t (and --glibc/--musl) from the last FROM line, e.g. FROM python:3.13-alpine",
+        help="take -p/-t (and --glibc/--musl) from the final stage's image, e.g. FROM python:3.13-alpine",
     )
     p.add_argument(
         "--pyodide-lock",

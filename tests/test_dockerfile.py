@@ -149,9 +149,11 @@ def test_chain_of_stages_and_platforms(tmp_path):
         "FROM deps\n"
     )
     assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.12", "linux-aarch64", glibc="2.36")
-    # A --platform on the later FROM wins over the one the stage was built with.
+    # As in Docker, a stage keeps the platform of the stage it builds on; --platform here changes nothing.
     text += "FROM --platform=linux/amd64 deps\n"
-    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.12", "linux-x86_64", glibc="2.36")
+    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.12", "linux-aarch64", glibc="2.36")
+    text = "FROM python:3.13-slim AS base\nFROM --platform=linux/arm64 base\n"
+    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.13", "linux-x86_64")
 
 
 def test_stage_names_are_case_insensitive(tmp_path):
@@ -161,5 +163,29 @@ def test_stage_names_are_case_insensitive(tmp_path):
 
 def test_unknown_stage_is_a_clear_error(tmp_path):
     text = "FROM python:3.13-alpine AS base\nFROM bse\n"
-    with pytest.raises(DockerfileError, match=r"no earlier stage is named 'bse' \(stages: base\)"):
+    with pytest.raises(DockerfileError, match=r"FROM bse: not an earlier stage \(base\) or an official python image"):
         read_dockerfile(_dockerfile(tmp_path, text))
+
+
+def test_scratch_after_stages_keeps_the_usual_error(tmp_path):
+    text = "FROM python:3.13-alpine AS build\nRUN pip wheel . -w /w\nFROM scratch\nCOPY --from=build /w /w\n"
+    with pytest.raises(DockerfileError, match="scratch: only the official python images"):
+        read_dockerfile(_dockerfile(tmp_path, text))
+
+
+def test_heredoc_bodies_are_not_from_lines(tmp_path):
+    text = (
+        "FROM python:3.13-alpine AS base\n"
+        "RUN <<EOF python\n"
+        "from os import path\n"
+        "EOF\n"
+        "COPY <<-'conf' <<\"other\" /etc/\n"
+        "\tFROM nothing\n"
+        "\tconf\n"
+        "FROM elsewhere\n"
+        "other\n"
+        'RUN cat <<< "FROM here"\n'
+        "FROM base\n"
+    )
+    assert last_from(text) == "base"
+    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.13", "musl-x86_64", musl="1.2")

@@ -38,14 +38,29 @@ class ImageTarget:
     musl: str | None = None
 
 
+# A heredoc start like `RUN <<EOF`, `<<-'EOF'` or `COPY <<"conf" /etc/x` (but not bash's `<<<`).
+_HEREDOC_RE = re.compile(r"(?<!<)<<(?!<)(-?)\s*([\"']?)([A-Za-z_][A-Za-z0-9_]*)\2")
+
+
 def _from_lines(text: str) -> list[str]:
-    """The arguments of every FROM instruction in order, with line continuations joined."""
+    """The arguments of every FROM instruction in order, with line continuations joined.
+
+    Heredoc bodies are skipped, so a Python `from x import y` inside `RUN <<EOF` isn't read as a FROM.
+    """
     joined = re.sub(r"\\\r?\n", " ", text)
     found = []
+    pending: list[tuple[bool, str]] = []  # heredocs still open: (tabs stripped, delimiter)
     for line in joined.splitlines():
+        if pending:
+            strip_tabs, delimiter = pending[0]
+            if (line.lstrip("\t") if strip_tabs else line).rstrip("\r") == delimiter:
+                pending.pop(0)
+            continue
         words = line.strip().split(None, 1)
         if len(words) == 2 and words[0].upper() == "FROM":
             found.append(words[1])
+        elif words and not words[0].startswith("#"):
+            pending = [(bool(m.group(1)), m.group(3)) for m in _HEREDOC_RE.finditer(line)]
     return found
 
 
@@ -83,7 +98,8 @@ def final_image(text: str) -> tuple[str, str | None]:
     """The image the last stage is built on, and its platform.
 
     `FROM base AS runtime` builds on an earlier stage called `base`; that is followed back (through
-    any chain of stages) to a real image. A `--platform` on a later FROM wins over an earlier one.
+    any chain of stages) to a real image. Like Docker, a stage keeps the platform of the stage it
+    builds on: a `--platform` on `FROM base` doesn't change what `base` was built for.
     """
     stages: dict[str, tuple[str, str | None]] = {}
     image, platform = "", None
@@ -91,16 +107,17 @@ def final_image(text: str) -> tuple[str, str | None]:
     if not lines:
         raise DockerfileError("no FROM line found")
     for args in lines:
-        image, own_platform, stage = _split_from(args)
+        image, platform, stage = _split_from(args)
         if (base := stages.get(image.lower())) is not None:
-            image, platform = base[0], own_platform or base[1]
-        else:
-            platform = own_platform
+            image, platform = base
         if stage:
             stages[stage] = (image, platform)
-    if stages and not any(c in image for c in ":/@$") and image.lower() not in IMAGE_NAMES:
+    bare = not any(c in image for c in ":/@$") and image.lower() not in (*IMAGE_NAMES, "scratch")
+    if stages and bare:
         known = ", ".join(stages)
-        raise DockerfileError(f"FROM {image}: no earlier stage is named {image!r} (stages: {known})")
+        raise DockerfileError(
+            f"FROM {image}: not an earlier stage ({known}) or an official python image, pass -p/-t instead"
+        )
     return image, platform
 
 
