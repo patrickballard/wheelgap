@@ -478,13 +478,13 @@ def test_markdown_and_json_conflict(capsys):
 
 
 def test_markdown_escapes_and_fail_on_missing(capsys, fake_pypi, tmp_path):
-    req = tmp_path / "req_a*b*.txt"
-    req.write_text("nowheels==0.9\n-e ./vendor/__internal__/\n")
+    req = tmp_path / "req_[a]#b.txt"  # characters every OS allows in a filename
+    req.write_text("nowheels==0.9\nhttps://files.example.com/my_pkg-1.0.tar.gz\n")
     code, out, _ = run(capsys, str(req), "-p", "3.13", "-t", "win-amd64", "--markdown", "--fail-on", "missing")
     assert code == 0
-    assert "req\\_a\\*b\\*.txt" in out
-    assert "\\_\\_internal\\_\\_" in out
-    assert "Source builds are allowed (`--fail-on missing`), so this run passes." in out
+    assert "`req_[a]#b.txt`" in out  # paths and URLs go in code spans, shown exactly and never linked
+    assert "`https://files.example.com/my_pkg-1.0.tar.gz` (url)" in out
+    assert "Source builds are allowed (fail-on missing), so this run passes." in out
     # The Action's summary run adds --exit-zero; the note depends on --fail-on, not on that.
     code, out2, _ = run(capsys, str(req), "-p", "3.13", "-t", "win-amd64", "--markdown", "--exit-zero")
     assert "Source builds are allowed" not in out2
@@ -492,3 +492,12 @@ def test_markdown_escapes_and_fail_on_missing(capsys, fake_pypi, tmp_path):
         capsys, str(req), "-p", "3.13", "-t", "win-amd64", "--markdown", "--fail-on", "missing", "--exit-zero"
     )
     assert "Source builds are allowed" in out3
+
+
+def test_markdown_helpers():
+    from wheelgap.cli import _code, _md
+
+    assert _md("./vendor/__x__/ a|b R&amp;D") == "./vendor/\\_\\_x\\_\\_/ a\\|b R\\&amp;D"
+    assert _code("a`b") == "``a`b``"
+    assert _code("`x`") == "`` `x` ``"
+    assert _code("a|b") == "`a|b`"

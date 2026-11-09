@@ -416,12 +416,19 @@ def gap_summary(gaps: list[Row], total: int, style: Style) -> str:
     return f"{style.bold(f'{len(gaps)} of {total} packages')} {verb} gaps: " + ", ".join(parts) + "."
 
 
-_MD_SPECIAL = re.compile(r"([\\`*_\[\]<>#|~])")
+_MD_SPECIAL = re.compile(r"([\\`*_\[\]<>#|~&])")
 
 
 def _md(text: str) -> str:
     """Escape text so Markdown shows it literally (paths like ./__internal__/ stay as written)."""
     return _MD_SPECIAL.sub(r"\\\1", text)
+
+
+def _code(text: str) -> str:
+    """A Markdown code span showing text exactly (paths and URLs stay readable and unlinked)."""
+    fence = "`" * (max((len(run) for run in re.findall(r"`+", text)), default=0) + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"  # only used outside tables, so | needs no escaping
 
 
 def render_markdown(
@@ -447,7 +454,7 @@ def render_markdown(
         ]
     pys = ", ".join(dict.fromkeys(t.python for t in targets))
     n_pkgs = f"{len(rows)} package{'s' * (len(rows) != 1)}"
-    out += [f"wheelgap {__version__} · {_md(' + '.join(source_labels))} · {n_pkgs} · Python {pys}", ""]
+    out += [f"wheelgap {__version__} · {' + '.join(map(_code, source_labels))} · {n_pkgs} · Python {pys}", ""]
 
     shown = rows if args.all else gaps
     if shown:
@@ -467,16 +474,16 @@ def render_markdown(
     if gaps:
         out += [gap_summary(gaps, len(rows), plain), ""]
         if source_allowed:
-            out += ["Source builds are allowed (`--fail-on missing`), so this run passes.", ""]
+            out += ["Source builds are allowed (fail-on missing), so this run passes.", ""]
     bundled = [r for r in rows if Status.BUNDLED in r.results.values()]
     if bundled and pyodide_lock:
         out += [_md(bundled_line(bundled, pyodide_lock)), ""]
     if skipped:
-        names = ", ".join(f"{p.name} ({p.skip})" for p in skipped)
-        out += [_md(f"Skipped {len(skipped)} non-index package{'s' * (len(skipped) != 1)}: {names}"), ""]
+        names = ", ".join(f"{_code(p.name)} ({p.skip})" for p in skipped)
+        out += [f"Skipped {len(skipped)} non-index package{'s' * (len(skipped) != 1)}: {names}", ""]
     for r in rows:
         if r.package.error:
-            out += [_md(f"Could not check {r.package.name}: {r.package.error}"), ""]
+            out += [f"Could not check {_md(r.package.name)}: {_code(r.package.error)}", ""]
     if args.explain and gaps:
         # Fenced, so wheel filenames and reasons need no escaping.
         lines = render_explain(gaps, targets, plain)
