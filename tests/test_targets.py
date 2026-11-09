@@ -67,6 +67,44 @@ def test_manylinux_includes_legacy_aliases():
     assert "manylinux2014_aarch64" in manylinux_platforms("aarch64", (2, 28))
 
 
+def test_manylinux_stops_at_2_17_outside_x86_and_i686():
+    # pip (packaging._manylinux.platform_tags) goes down to glibc 2.5 only on x86_64/i686; every
+    # other arch's first manylinux was 2.17, so pip takes no manylinux tag below that (issue #79).
+    plats = manylinux_platforms("aarch64", (2, 28))
+    assert "manylinux_2_17_aarch64" in plats and "manylinux2014_aarch64" in plats
+    assert "manylinux_2_12_aarch64" not in plats
+    for arch in ("aarch64", "armv7l", "ppc64le", "s390x", "riscv64"):
+        floor_plats = manylinux_platforms(arch, (2, 28))
+        assert f"manylinux_2_17_{arch}" in floor_plats and f"manylinux_2_12_{arch}" not in floor_plats
+    assert "manylinux_2_5_x86_64" in manylinux_platforms("x86_64", (2, 28))
+    assert "manylinux_2_12_x86_64" in manylinux_platforms("x86_64", (2, 28))
+    assert "manylinux_2_5_i686" in manylinux_platforms("i686", (2, 28))
+
+
+@pytest.mark.parametrize(
+    "platform,arch",
+    [
+        ("linux-aarch64", "aarch64"),
+        ("linux-armv7l", "armv7l"),
+        ("linux-ppc64le", "ppc64le"),
+        ("linux-s390x", "s390x"),
+        ("linux-riscv64", "riscv64"),
+    ],
+)
+def test_manylinux_below_2_17_is_rejected_outside_x86_arches(platform, arch):
+    # default target glibc (2.36): a manylinux_2_12 wheel is simply not in the tags pip would take
+    assert not accepts(t(platform), f"x-1-cp313-cp313-manylinux_2_12_{arch}.whl")
+
+
+def test_manylinux_2_12_is_still_accepted_on_x86_64():
+    assert accepts(t("linux-x86_64"), "x-1-cp313-cp313-manylinux_2_12_x86_64.whl")
+
+
+def test_manylinux_target_below_the_arch_floor_takes_only_plain_linux():
+    # a glibc-2.8 aarch64: pip runs no manylinux wheel there, only plain linux_aarch64 (PEP 599)
+    assert t("linux-aarch64", glibc=(2, 8)).platform_tags() == ["linux_aarch64"]
+
+
 def test_glibc_ceiling():
     assert accepts(t("linux-x86_64", glibc=(2, 36)), "x-1-cp313-cp313-manylinux_2_34_x86_64.whl")
     assert not accepts(t("linux-x86_64", glibc=(2, 31)), "x-1-cp313-cp313-manylinux_2_34_x86_64.whl")

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- On Linux targets other than `linux-x86_64`, and for `i686`, wheelgap now stops at `manylinux_2_17`: pip has no manylinux floors below glibc 2.17 for those architectures (their first manylinux was manylinux2014), so e.g. `manylinux_2_12_aarch64` is no longer counted as accepted on `linux-aarch64`, and a target with `--glibc` itself below 2.17 takes only plain `linux_<arch>` wheels. `linux-x86_64` still goes down to 2.5 like pip. (#79)
+
 ## 0.6.0 (2026-11-09)
 
 New targets for phones and more Linux hardware, and a job summary for the GitHub Action.

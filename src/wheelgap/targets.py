@@ -226,7 +226,10 @@ def parse_ios_version(spec: str) -> tuple[int, int]:
 def manylinux_platforms(arch: str, glibc: tuple[int, int]) -> list[str]:
     major, minor = glibc
     out = []
-    for m in range(minor, 4, -1):
+    # pip accepts manylinux floors only down to 2.5 on x86_64 and i686; every other arch's first
+    # manylinux was 2.17 (manylinux2014), and pip takes no manylinux tag below that (#79).
+    oldest = 5 if arch in ("x86_64", "i686") else 17
+    for m in range(minor, oldest - 1, -1):
         out.append(f"manylinux_{major}_{m}_{arch}")
         legacy = _LEGACY_MANYLINUX.get(m)
         if major == 2 and legacy and arch in _LEGACY_ARCHES[legacy]:
