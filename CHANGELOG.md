@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Python API**: `wheelgap.make_targets()`, `check_package()`, `check_packages()` and `check_lockfile()`, returning `Result` objects (`.ok`, `.gaps`, `.statuses`, `.to_dict()`), so other tools don't need to go through the CLI.
+- **`python -m wheelgap.scan`**: check the latest release of the top N PyPI packages against every platform and write one JSON file with per-platform totals, the first step towards the coverage tracker on the roadmap.
 - `--list-targets` now shows platform aliases and compatibility limits (the Python versions for `pyodide`), with JSON output available via `--json`. (#41, thanks [@Daiyuanranfeng](https://github.com/Daiyuanranfeng))
 
 ## 0.3.0 (2026-11-09)

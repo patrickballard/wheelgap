@@ -146,6 +146,32 @@ repos:
 
 The hook runs when `uv.lock`, `poetry.lock`, `pdm.lock`, `pylock.toml`, `Pipfile.lock` or a `requirements*.txt` file changes. Put your targets in `[tool.wheelgap]` in `pyproject.toml` so the hook checks the right platforms. Pass extra options with `args:`, for example `args: [--fail-on, missing]`.
 
+### From Python
+
+```python
+import wheelgap
+
+targets = wheelgap.make_targets(python="3.13", platforms=["linux-aarch64", "musl-aarch64"])
+
+result = wheelgap.check_package("numpy", "2.3.4", targets)   # looks the files up on PyPI
+result.ok        # True if every target has a wheel
+result.gaps      # the targets that don't
+result.to_dict() # {"name": ..., "results": {"3.13 musl-aarch64": "wheel", ...}}
+
+for r in wheelgap.check_lockfile("uv.lock", targets):          # markers and the uv graph respected
+    print(r.name, r.version, [t.platform for t in r.gaps])
+```
+
+`check_packages([...])` checks many packages in parallel, and `check_package(..., files=[...])` works offline from filenames you already have.
+
+### Scanning the top PyPI packages
+
+```bash
+python -m wheelgap.scan --top 5000 --out coverage.json
+```
+
+This checks the latest release of the most-downloaded packages (from [top-pypi-packages](https://hugovk.dev/top-pypi-packages/)) against every platform, for Python 3.13, 3.14 and 3.14t by default, and writes one JSON file with per-platform totals. It's the data behind the [coverage tracker on the roadmap](https://github.com/patrickballard/wheelgap/discussions/43).
+
 ## How it works
 
 - **Lockfiles are read offline.** `uv.lock`, `pylock.toml`, `poetry.lock` and `pdm.lock` already record every file published for each pinned version. wheelgap parses the wheel filenames' tags with [`packaging`](https://packaging.pypa.io/) and checks them against the exact tag set each target accepts. That is the same logic pip and uv use to pick a wheel.

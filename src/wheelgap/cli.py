@@ -7,11 +7,11 @@ import json
 import os
 import re
 import sys
-import sysconfig
 import tomllib
 from pathlib import Path
 
 from . import __version__
+from .api import running_python
 from .check import Row, Status, check, explain, has_sdist
 from .dockerfile import DockerfileError, read_dockerfile
 from .pyodide import PyodideLock, PyodideLockError, apply_bundled, check_targets, load_pyodide_lock
@@ -40,11 +40,6 @@ examples:
   wheelgap requirements.txt --json         machine-readable output for CI
   wheelgap -t alpine-arm64 --explain       show which wheels were rejected, and why
 """
-
-
-def running_python() -> str:
-    ft = "t" if sysconfig.get_config_var("Py_GIL_DISABLED") else ""
-    return f"{sys.version_info.major}.{sys.version_info.minor}{ft}"
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
