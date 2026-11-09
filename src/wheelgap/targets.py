@@ -181,12 +181,19 @@ def parse_python(spec: str) -> tuple[int, int, bool]:
     return int(m.group(1)), int(m.group(2)), bool(m.group(3))
 
 
+_VERSION_EXAMPLES = {"glibc": "2.36", "musl": "1.2", "macOS": "14.0", "iOS": "13.0"}
+
+
 def parse_version_pair(spec: str, what: str) -> tuple[int, int]:
+    example = _VERSION_EXAMPLES.get(what, "2.36")
     try:
         parts = spec.strip().split(".")
         major, minor = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0  # "15" means 15.0
     except ValueError:
-        raise TargetError(f"can't parse {what} version {spec!r} (expected e.g. 2.36)") from None
+        raise TargetError(f"can't parse {what} version {spec!r} (expected e.g. {example})") from None
+    # Tags are generated for every version below this one, so absurd values would never finish.
+    if not (0 <= major <= 99 and 0 <= minor <= 99):
+        raise TargetError(f"{what} version {spec!r} is out of range (expected e.g. {example})")
     return major, minor
 
 

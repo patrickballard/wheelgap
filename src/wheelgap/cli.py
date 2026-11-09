@@ -207,7 +207,7 @@ def load_config(path: Path) -> dict:
                 value = str(value)  # an API level is naturally written as a number
             if not isinstance(value, str):
                 example = {
-                    "android-api": "an integer or a string like 24",
+                    "android-api": 'an integer or a string like "24"',
                     "ios": 'a string like "13.0"',
                     "musl": 'a string like "1.2"',
                     "macos": 'a string like "14.0"',

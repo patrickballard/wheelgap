@@ -294,5 +294,10 @@ def test_mobile_versions_and_errors():
         build_targets(["3.13"], ["android"], android_api="15")
     with pytest.raises(TargetError, match="doesn't exist"):
         build_targets(["3.13"], ["android"], android_api="5000000")
+    for flag in ("ios", "macos", "glibc"):
+        with pytest.raises(TargetError, match="out of range"):
+            build_targets(["3.13"], ["ios"], **{flag: "13.3000000"})
+    with pytest.raises(TargetError, match=r"can't parse iOS version 'abc' \(expected e.g. 13.0\)"):
+        build_targets(["3.13"], ["ios"], ios="abc")
     with pytest.raises(TargetError, match="iOS 11.0 is too old"):
         build_targets(["3.13"], ["ios"], ios="11.0")
