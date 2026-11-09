@@ -1,0 +1,10 @@
+---
+description: Check Python dependencies for missing prebuilt wheels (ARM, Alpine/musl, Windows on ARM, free-threaded Python) with wheelgap, when a build compiles packages from source or the user asks whether dependencies will install on a platform.
+alwaysApply: false
+---
+
+- Run `uvx wheelgap --json` in the project directory (it finds the lockfile). Choose targets with `-p` (e.g. `3.13`, `3.14t`) and `-t` (e.g. `linux-aarch64,musl-aarch64`), or take them from a Dockerfile with `--dockerfile Dockerfile`. `uvx wheelgap --list-targets` lists them.
+- Exit code `0` means no gaps, `1` gaps, `2` bad input. In `--json`, each package's `results` maps a target label to `wheel`, `source`, `missing`, `unknown`, `n/a` or `bundled`; labels are listed in the top-level `targets`.
+- Treat `unknown` as a failed lookup (see the package's `error`), not as fine. Add `--explain` to see why each wheel was rejected.
+- Suggest fixes: pin a version that has the wheel, use a `-slim` base instead of Alpine, or add build dependencies deliberately. Accept a known gap with `--ignore NAME` (or `ignore = [...]` in `[tool.wheelgap]`), never by hiding it.
+- wheelgap reports wheel availability only, not free-threading safety.

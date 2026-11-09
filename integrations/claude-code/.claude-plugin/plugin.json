@@ -1,0 +1,11 @@
+{
+  "name": "wheelgap",
+  "version": "0.1.0",
+  "description": "Check whether a Python project's dependencies have prebuilt wheels for the platforms it ships to, with wheelgap.",
+  "author": {
+    "name": "wheelgap",
+    "url": "https://github.com/wheelgap"
+  },
+  "homepage": "https://github.com/wheelgap/wheelgap",
+  "license": "MIT"
+}

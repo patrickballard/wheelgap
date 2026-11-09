@@ -209,6 +209,23 @@ python -m wheelgap.scan --top 5000 --out coverage.json
 
 This checks the latest release of the most-downloaded packages (from [top-pypi-packages](https://hugovk.dev/top-pypi-packages/)) against the eight common platforms (and Pyodide), for Python 3.13, 3.14, 3.14t, 3.15 and 3.15t by default, and writes one JSON file with per-platform totals. It's the data behind the [coverage tracker on the roadmap](https://github.com/wheelgap/wheelgap/discussions/43).
 
+## Using wheelgap with an AI coding agent
+
+wheelgap ships a **`check-wheels` skill** that teaches coding agents to run it, read its JSON and suggest fixes. It follows the open [Agent Skills](https://agentskills.io/) format.
+
+**Claude Code** (install from this repository as a plugin):
+
+```text
+/plugin marketplace add wheelgap/wheelgap
+/plugin install wheelgap@wheelgap
+```
+
+On Claude Code 2.1.275 or later, `/plugin install wheelgap --marketplace wheelgap/wheelgap` does both in one step.
+
+**Codex, Cursor, GitHub Copilot and others:** copy [`integrations/claude-code/skills/check-wheels/`](integrations/claude-code/skills/check-wheels/) into your project's `.agents/skills/` folder. For a Cursor project rule instead, copy [`integrations/cursor/wheelgap.mdc`](integrations/cursor/wheelgap.mdc) to `.cursor/rules/`.
+
+Contributing to wheelgap with an agent? See [AGENTS.md](AGENTS.md).
+
 ## How it works
 
 - **Lockfiles are read offline.** `uv.lock`, `pylock.toml`, `poetry.lock` and `pdm.lock` already record every file published for each pinned version (except a `uv.lock` or `pylock.toml` whose `requires-python` leaves out the Python you check; see below). wheelgap parses the wheel filenames' tags with [`packaging`](https://packaging.pypa.io/) and checks them against the exact tag set each target accepts. That is the same logic pip and uv use to pick a wheel.
