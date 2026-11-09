@@ -83,9 +83,9 @@ def _from_lines(text: str) -> list[str]:
     found = []
     parts: list[str] = []  # an instruction continued onto the next line
 
-    def finish(instruction: str) -> None:
+    def finish(instruction: str, joined: bool) -> None:
         words = instruction.split(None, 1)
-        if words and words[0].upper().startswith("FROM") and words[0].upper() != "FROM":
+        if joined and words and words[0].upper().startswith("FROM") and words[0].upper() != "FROM":
             raise DockerfileError(f"unknown instruction {words[0]!r} (a FROM joined to the next line?)")
         if words and words[0].upper() == "FROM":
             if len(words) == 1:
@@ -102,10 +102,12 @@ def _from_lines(text: str) -> list[str]:
         if m := continued.search(line):
             parts.append(line[: m.start()])
             continue
-        finish("".join([*parts, line]).strip())  # Docker joins continued lines with nothing in between
+        finish(
+            "".join([*parts, line]).strip(), joined=bool(parts)
+        )  # Docker joins continued lines with nothing in between
         parts = []
     if parts:  # the file ended mid-continuation: Docker still reads what's there
-        finish("".join(parts).strip())
+        finish("".join(parts).strip(), joined=len(parts) > 1)
     return found
 
 

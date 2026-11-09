@@ -208,6 +208,11 @@ def test_unknown_stage_lists_only_earlier_stages(tmp_path):
         read_dockerfile(_dockerfile(tmp_path, "FROM alpine AS base\nFROM base\n"))
 
 
+def test_python_lines_starting_with_from_are_not_errors(tmp_path):
+    text = "FROM python:3.13 AS a\nRUN python - <<EOF\nfromtimestamp = 1\nEOF\nFROM python:3.12\n"
+    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.12", "linux-x86_64")
+
+
 def test_python_imports_in_heredocs_are_not_from_lines(tmp_path):
     text = (
         "FROM python:3.12-slim AS app\n"
