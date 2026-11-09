@@ -32,6 +32,7 @@ from .targets import (
     TargetError,
     build_targets,
     parse_api_level,
+    parse_ios_version,
     parse_version_pair,
     resolve_platform,
 )
@@ -200,8 +201,15 @@ def load_config(path: Path) -> dict:
             if key == "android-api" and isinstance(value, int) and not isinstance(value, bool):
                 value = str(value)  # an API level is naturally written as a number
             if not isinstance(value, str):
-                example = {"android-api": "24", "ios": "13.0", "fail-on": "missing"}.get(key, "2.31")
-                raise SourceError(f'{path}: [tool.wheelgap] {key} must be a string like "{example}"')
+                example = {
+                    "android-api": "an integer or a string like 24",
+                    "ios": 'a string like "13.0"',
+                    "musl": 'a string like "1.2"',
+                    "macos": 'a string like "14.0"',
+                    "fail-on": 'a string like "missing"',
+                    "pyodide-lock": "a path or URL string",
+                }.get(key, 'a string like "2.31"')
+                raise SourceError(f"{path}: [tool.wheelgap] {key} must be {example}")
             if key == "fail-on" and value not in FAIL_ON:
                 raise SourceError(f"{path}: [tool.wheelgap] fail-on must be one of: {', '.join(FAIL_ON)}")
         elif key == "quiet":
@@ -376,12 +384,13 @@ def print_target_list(args: argparse.Namespace, config: dict) -> None:
         "manylinux": ("glibc", args.glibc or config.get("glibc", DEFAULT_GLIBC)),
         "musllinux": ("musl", args.musl or config.get("musl", DEFAULT_MUSL)),
         "macos": ("macOS", args.macos or config.get("macos", DEFAULT_MACOS)),
-        "ios": ("iOS", args.ios or config.get("ios", DEFAULT_IOS)),
     }
     limits = {}
     for family, (label, version) in versions.items():
         major, minor = parse_version_pair(version, label)
         limits[family] = f", {label} <= {major}.{minor}"
+    major, minor = parse_ios_version(args.ios or config.get("ios", DEFAULT_IOS))
+    limits["ios"] = f", iOS <= {major}.{minor}"
     pythons = ", ".join(f"{a}.{b}" for a, b in PYODIDE_PLATFORMS)
     limits["pyodide"] = f", Python {pythons} (not in -t all)"
     limits["ios"] += " (wheels only; -t mobile, not in -t all)"

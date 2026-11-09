@@ -126,10 +126,12 @@ def _platform_reason(plat: str, target: Target) -> str:
         return f"{plat} is for a different Pyodide ABI than Python {target.python}"
     if family == "ios" and (m := _IOS_RE.match(plat)) and m.group(3) == arch:
         need = (int(m.group(1)), int(m.group(2)))
+        have = ".".join(map(str, target.ios))
         if need < IOS_FLOOR:
             return f"{plat} is older than iOS 12.0, the oldest pip accepts"
-        have = ".".join(map(str, target.ios))
-        return f"{plat} needs iOS {need[0]}.{need[1]}, newer than {have} (--ios)"
+        if need > target.ios:
+            return f"{plat} needs iOS {need[0]}.{need[1]}, newer than {have} (--ios)"
+        return f"{plat} isn't one of the iOS versions pip tries for {have} (x.0 to x.9 of each older release)"
     if family == "android" and (m := _ANDROID_RE.match(plat)) and m.group(2) == arch:
         if int(m.group(1)) < ANDROID_FLOOR:
             return f"{plat} is older than API level {ANDROID_FLOOR}, the oldest pip accepts"

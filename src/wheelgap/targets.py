@@ -194,6 +194,9 @@ IOS_FLOOR = (12, 0)  # the oldest iOS packaging (and so pip) considers
 ANDROID_FLOOR = 16  # the oldest API level packaging (and so pip) considers
 
 
+ANDROID_CEILING = 99  # far above any real API level (36 in 2025); pip tries every level down to 16
+
+
 def parse_api_level(spec: str | int) -> int:
     try:
         level = int(str(spec).strip())
@@ -201,7 +204,16 @@ def parse_api_level(spec: str | int) -> int:
         raise TargetError(f"can't parse Android API level {spec!r} (expected e.g. 24)") from None
     if level < ANDROID_FLOOR:
         raise TargetError(f"Android API level {level} is too old ({ANDROID_FLOOR} is the lowest pip knows)")
+    if level > ANDROID_CEILING:
+        raise TargetError(f"Android API level {level} doesn't exist (expected e.g. 24)")
     return level
+
+
+def parse_ios_version(spec: str) -> tuple[int, int]:
+    version = parse_version_pair(spec, "iOS")
+    if version < IOS_FLOOR:
+        raise TargetError(f"iOS {spec} is too old (12.0 is the lowest pip knows)")
+    return version
 
 
 def manylinux_platforms(arch: str, glibc: tuple[int, int]) -> list[str]:
@@ -326,10 +338,8 @@ def build_targets(
         glibc=parse_version_pair(glibc, "glibc"),
         musl=parse_version_pair(musl, "musl"),
         macos=parse_version_pair(macos, "macOS"),
-        ios=parse_version_pair(ios, "iOS"),
+        ios=parse_ios_version(ios),
     )
-    if versions["ios"] < IOS_FLOOR:
-        raise TargetError(f"iOS {ios} is too old (12.0 is the lowest pip knows)")
     api_level = parse_api_level(android_api)
     if mobile := [p for p in plats if p in MOBILE_PLATFORMS]:
         for ma, mi, _ in pys:

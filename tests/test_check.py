@@ -281,6 +281,9 @@ def test_mobile_explain_reasons_and_sdists():
     assert rejection("x-1-cp313-cp313-ios_11_0_arm64_iphoneos.whl", ios) == (
         "ios_11_0_arm64_iphoneos is older than iOS 12.0, the oldest pip accepts"
     )
+    assert rejection("x-1-cp313-cp313-ios_12_10_arm64_iphoneos.whl", ios) == (
+        "ios_12_10_arm64_iphoneos isn't one of the iOS versions pip tries for 13.0 (x.0 to x.9 of each older release)"
+    )
     assert rejection("x-1-cp313-cp313-android_15_arm64_v8a.whl", android) == (
         "android_15_arm64_v8a is older than API level 16, the oldest pip accepts"
     )

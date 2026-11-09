@@ -292,5 +292,7 @@ def test_mobile_versions_and_errors():
         build_targets(["3.13"], ["android"], android_api="Q")
     with pytest.raises(TargetError, match="too old"):
         build_targets(["3.13"], ["android"], android_api="15")
+    with pytest.raises(TargetError, match="doesn't exist"):
+        build_targets(["3.13"], ["android"], android_api="5000000")
     with pytest.raises(TargetError, match="iOS 11.0 is too old"):
         build_targets(["3.13"], ["ios"], ios="11.0")

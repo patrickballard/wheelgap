@@ -282,8 +282,13 @@ def test_mobile_flags_and_config(capsys, fake_pypi, tmp_path, monkeypatch):
     assert code == 1
     statuses = {p["name"]: set(p["results"].values()) for p in data["packages"]}
     assert statuses == {"nowheels": {"missing"}, "purewheel": {"wheel"}}
+    code, _, err = run(capsys, "--list-targets", "--ios", "11.0")
+    assert code == 2 and "iOS 11.0 is too old" in err
     code, _, err = run(capsys, "six", "-p", "3.12", "-t", "android")
     assert code == 2 and "need Python 3.13" in err
+    (tmp_path / "pyproject.toml").write_text("[tool.wheelgap]\nandroid-api = true\n")
+    code, _, err = run(capsys, "--list-targets")
+    assert code == 2 and "android-api must be an integer or a string like 24" in err
 
 
 def test_list_targets_rejects_invalid_compatibility_version(capsys):
