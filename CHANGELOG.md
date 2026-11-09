@@ -3,6 +3,7 @@
 ## Unreleased
 
 - `--markdown` prints the report as Markdown, and the GitHub Action now writes it to the run's summary page (`summary: false` turns that off). The step still passes or fails on the normal run. (#7)
+- New Linux targets for 32-bit ARM (`linux-armv7l`, e.g. Raspberry Pi OS), `ppc64le`, `s390x` and `riscv64`, each with a `musl-*` twin for Alpine, and their Docker names (`linux/arm/v7` and so on) in `-t` and `--dockerfile`. Plain `linux_armv7l` wheels, which PyPI allows for the Raspberry Pi, count on `linux-armv7l` as they do for pip, but not on `musl-armv7l`: they're glibc builds. `-t all` still means the eight common platforms; `-t everything` adds these. (#8)
 
 ## 0.5.0 (2026-11-09)
 
