@@ -1,10 +1,11 @@
 ---
-description: Check Python dependencies for missing prebuilt wheels (ARM, Alpine/musl, Windows on ARM, free-threaded Python) with wheelgap, when a build compiles packages from source or the user asks whether dependencies will install on a platform.
+description: Check Python dependencies for missing prebuilt wheels (ARM, Alpine/musl, Windows on ARM, free-threaded Python) with wheelgap, when a build compiles packages from source ("Failed building wheel for", "Microsoft Visual C++ 14.0 is required") or the user asks whether dependencies will install on a platform.
 alwaysApply: false
 ---
 
-- Run `uvx wheelgap --json` in the project directory (it finds the lockfile). Choose targets with `-p` (e.g. `3.13`, `3.14t`) and `-t` (e.g. `linux-aarch64,musl-aarch64`), or take them from a Dockerfile with `--dockerfile Dockerfile`. `uvx wheelgap --list-targets` lists them.
-- Exit code `0` means no gaps, `1` gaps, `2` bad input. In `--json`, each package's `results` maps a target label to `wheel`, `source`, `missing`, `unknown`, `n/a` or `bundled`; labels are listed in the top-level `targets`.
-- Treat `unknown` as a failed lookup (see the package's `error`), not as fine. Add `--explain` to see why each wheel was rejected.
+- Run `uvx wheelgap@latest -p <the project's Python> -t <platforms> --json` in the project directory, e.g. `-p 3.13 -t linux-aarch64,musl-aarch64`. Always pass `-p` (without it wheelgap may check free-threaded 3.14t). Or take both from a Dockerfile with `--dockerfile Dockerfile`. `uvx wheelgap@latest --list-targets` lists targets.
+- It finds `uv.lock`, `pylock.toml`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, `requirements.txt` or `requirements.lock`; pass other files by path.
+- Read `summary.with_gaps` and each package's `results` (target label from `targets[].label` → `wheel`, `source`, `missing`, `unknown`, `n/a` or `bundled`), not just the exit code (`0`/`1` gaps/`2` bad input). `skipped` lists packages that weren't checked.
+- Treat `unknown` as a failed lookup (see the package's `error`), not as fine. `--explain` adds why each wheel was rejected (`rejected`) and, for `uv.lock`, which dependency pulls it in (`via`).
 - Suggest fixes: pin a version that has the wheel, use a `-slim` base instead of Alpine, or add build dependencies deliberately. Accept a known gap with `--ignore NAME` (or `ignore = [...]` in `[tool.wheelgap]`), never by hiding it.
 - wheelgap reports wheel availability only, not free-threading safety.
