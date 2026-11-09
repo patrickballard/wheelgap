@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `--dockerfile` follows named stages: with `FROM python:3.13-alpine AS base` and later `FROM base AS runtime`, the final stage is checked as `python:3.13-alpine`, through any chain of stages. A `--platform` on a later `FROM` wins, and a misspelt stage name gets a clear error. (#10)
+
 ## 0.5.0 (2026-11-09)
 
 wheelgap now lives at [github.com/wheelgap/wheelgap](https://github.com/wheelgap/wheelgap). Old links redirect, but update `uses:` and pre-commit `repo:` lines when you next touch them.

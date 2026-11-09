@@ -1,4 +1,4 @@
-"""Turn the last FROM line of a Dockerfile into a wheelgap target."""
+"""Turn the final stage of a Dockerfile into a wheelgap target, following named stages back to an image."""
 
 from __future__ import annotations
 
@@ -38,21 +38,27 @@ class ImageTarget:
     musl: str | None = None
 
 
-def last_from(text: str) -> str:
-    """The arguments of the last FROM instruction, with line continuations joined."""
+def _from_lines(text: str) -> list[str]:
+    """The arguments of every FROM instruction in order, with line continuations joined."""
     joined = re.sub(r"\\\r?\n", " ", text)
-    found = None
+    found = []
     for line in joined.splitlines():
         words = line.strip().split(None, 1)
         if len(words) == 2 and words[0].upper() == "FROM":
-            found = words[1]
-    if found is None:
-        raise DockerfileError("no FROM line found")
+            found.append(words[1])
     return found
 
 
-def parse_from(args: str) -> ImageTarget:
-    """Parse `[--platform=P] image[:tag][@digest] [AS name]`."""
+def last_from(text: str) -> str:
+    """The arguments of the last FROM instruction, with line continuations joined."""
+    found = _from_lines(text)
+    if not found:
+        raise DockerfileError("no FROM line found")
+    return found[-1]
+
+
+def _split_from(args: str) -> tuple[str, str | None, str | None]:
+    """`[--platform=P] image [AS name]` -> (image, platform, stage name)."""
     words = args.split()
     platform = None
     while words and words[0].startswith("--"):
@@ -63,7 +69,39 @@ def parse_from(args: str) -> ImageTarget:
             platform = words.pop(0)
     if not words:
         raise DockerfileError(f"FROM {args}: no image")
-    return parse_image(words[0], platform)
+    stage = words[2].lower() if len(words) >= 3 and words[1].upper() == "AS" else None
+    return words[0], platform, stage
+
+
+def parse_from(args: str) -> ImageTarget:
+    """Parse `[--platform=P] image[:tag][@digest] [AS name]`."""
+    image, platform, _ = _split_from(args)
+    return parse_image(image, platform)
+
+
+def final_image(text: str) -> tuple[str, str | None]:
+    """The image the last stage is built on, and its platform.
+
+    `FROM base AS runtime` builds on an earlier stage called `base`; that is followed back (through
+    any chain of stages) to a real image. A `--platform` on a later FROM wins over an earlier one.
+    """
+    stages: dict[str, tuple[str, str | None]] = {}
+    image, platform = "", None
+    lines = _from_lines(text)
+    if not lines:
+        raise DockerfileError("no FROM line found")
+    for args in lines:
+        image, own_platform, stage = _split_from(args)
+        if (base := stages.get(image.lower())) is not None:
+            image, platform = base[0], own_platform or base[1]
+        else:
+            platform = own_platform
+        if stage:
+            stages[stage] = (image, platform)
+    if stages and not any(c in image for c in ":/@$") and image.lower() not in IMAGE_NAMES:
+        known = ", ".join(stages)
+        raise DockerfileError(f"FROM {image}: no earlier stage is named {image!r} (stages: {known})")
+    return image, platform
 
 
 def parse_image(image: str, platform: str | None = None) -> ImageTarget:
@@ -113,6 +151,6 @@ def parse_image(image: str, platform: str | None = None) -> ImageTarget:
 
 def read_dockerfile(path: Path) -> ImageTarget:
     try:
-        return parse_from(last_from(path.read_text(encoding="utf-8")))
+        return parse_image(*final_image(path.read_text(encoding="utf-8")))
     except DockerfileError as e:
         raise DockerfileError(f"{path}: {e}") from None

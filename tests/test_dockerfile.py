@@ -128,3 +128,38 @@ def test_cli_wheelgap_names_still_win_over_the_image(capsys, fixtures, tmp_path)
     dockerfile.write_text("FROM python:3.13-alpine\n")
     main([str(fixtures / "uvproj"), "--dockerfile", str(dockerfile), "-t", "linux-aarch64", "--json"])
     assert [t["platform"] for t in json.loads(capsys.readouterr().out)["targets"]] == ["linux-aarch64"]
+
+
+def _dockerfile(tmp_path, text):
+    path = tmp_path / "Dockerfile"
+    path.write_text(text)
+    return path
+
+
+def test_named_stage_is_followed(tmp_path):
+    text = "FROM python:3.13-alpine AS base\nRUN apk add --no-cache libpq\n\nFROM base AS runtime\nCOPY . /app\n"
+    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.13", "musl-x86_64", musl="1.2")
+
+
+def test_chain_of_stages_and_platforms(tmp_path):
+    text = (
+        "FROM --platform=linux/arm64 python:3.12-slim-bookworm AS base\n"
+        "FROM base AS deps\n"
+        "FROM python:3.11 AS unrelated\n"
+        "FROM deps\n"
+    )
+    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.12", "linux-aarch64", glibc="2.36")
+    # A --platform on the later FROM wins over the one the stage was built with.
+    text += "FROM --platform=linux/amd64 deps\n"
+    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.12", "linux-x86_64", glibc="2.36")
+
+
+def test_stage_names_are_case_insensitive(tmp_path):
+    text = "FROM python:3.13 as Base\nFROM BASE\n"
+    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.13", "linux-x86_64")
+
+
+def test_unknown_stage_is_a_clear_error(tmp_path):
+    text = "FROM python:3.13-alpine AS base\nFROM bse\n"
+    with pytest.raises(DockerfileError, match=r"no earlier stage is named 'bse' \(stages: base\)"):
+        read_dockerfile(_dockerfile(tmp_path, text))
