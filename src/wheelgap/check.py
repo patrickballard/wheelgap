@@ -20,6 +20,7 @@ class Status(StrEnum):
     MISSING = "missing"  # no compatible wheel and no sdist: install fails
     UNKNOWN = "unknown"  # couldn't look the package up
     NOT_NEEDED = "n/a"  # markers say this package isn't installed on the target
+    BUNDLED = "bundled"  # no wheel on the index, but Pyodide ships its own build (--pyodide-lock)
 
 
 SDIST_SUFFIXES = (".tar.gz", ".zip", ".tar.bz2", ".tgz", ".tar.xz")
@@ -32,7 +33,7 @@ class Row:
 
     @property
     def ok(self) -> bool:
-        return all(s in (Status.WHEEL, Status.NOT_NEEDED) for s in self.results.values())
+        return all(s in (Status.WHEEL, Status.NOT_NEEDED, Status.BUNDLED) for s in self.results.values())
 
     @property
     def fails_install(self) -> bool:

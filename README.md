@@ -82,6 +82,7 @@ Each cell in the table is one of:
 | `● source` | no wheel, only an sdist, so it compiles at install time (needs a compiler, headers, time) |
 | `✗ missing` | no wheel and no sdist, so the install fails |
 | `–` | not installed on this target (environment markers exclude it) |
+| `✓ bundled` | no wheel on PyPI, but Pyodide ships its own build (with `--pyodide-lock`) |
 
 Packages that are fine everywhere are hidden; `--all` shows them.
 
@@ -110,7 +111,11 @@ If you think wheelgap got a package wrong, that output (or `--json --explain`) i
 | `win-arm64` | `windows-arm64` | `win_arm64` |
 | `pyodide` | `wasm`, `wasm32`, `emscripten` | Pyodide's ABI for that Python: `pyodide_2024_0` (3.12), `pyodide_2025_0` / `pyemscripten_2025_0` (3.13), `pyemscripten_2026_0` (3.14) |
 
-**Pyodide (Python in the browser)** only installs wheels: there's no compiler, so a package with only an sdist shows as `✗ missing`, not `● source`. Pyodide wheels are tied to one ABI per Python version and don't work across them. wheelgap checks what's published on PyPI; Pyodide also ships its own builds of many popular packages (numpy, pydantic-core and others) from its own distribution, which wheelgap doesn't know about yet.
+**Pyodide (Python in the browser)** only installs wheels: there's no compiler, so a package with only an sdist shows as `✗ missing`, not `● source`. Pyodide wheels are tied to one ABI per Python version and don't work across them. Pyodide also ships its own builds of many popular packages (numpy, pydantic-core and others) that aren't on PyPI. Point `--pyodide-lock` at the release's `pyodide-lock.json` (a path or URL, also `pyodide-lock = "..."` in `[tool.wheelgap]`) and those count as `✓ bundled`, with a note when Pyodide's version differs from the one you pinned:
+
+```bash
+wheelgap -p 3.12 -t pyodide --pyodide-lock https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide-lock.json
+```
 
 Docker platform names also work with `-t`, for example `-t linux/amd64,linux/arm64` (also `linux/arm64/v8`).
 

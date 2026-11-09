@@ -14,6 +14,7 @@ from pathlib import Path
 from . import __version__
 from .check import Row, Status, check, explain, has_sdist
 from .dockerfile import DockerfileError, read_dockerfile
+from .pyodide import PyodideLock, PyodideLockError, apply_bundled, check_targets, load_pyodide_lock
 from .pypi import fill_all
 from .sources import SourceError, load_inputs
 from .targets import DEFAULT_PLATFORMS, PLATFORMS, Target, TargetError, build_targets
@@ -76,6 +77,11 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="take -p/-t (and --glibc/--musl) from the last FROM line, e.g. FROM python:3.13-alpine",
     )
     p.add_argument(
+        "--pyodide-lock",
+        metavar="PATH_OR_URL",
+        help="a Pyodide release's pyodide-lock.json: packages Pyodide ships itself count as available on -t pyodide",
+    )
+    p.add_argument(
         "--online", action="store_true", help="re-check lockfile packages against PyPI instead of trusting the lockfile"
     )
     p.add_argument("--all", action="store_true", help="show every package, not just the ones with gaps")
@@ -95,7 +101,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 FAIL_ON = ("source", "missing")
 LIST_KEYS = ("python", "targets")
-STR_KEYS = ("glibc", "musl", "macos", "fail-on")
+STR_KEYS = ("glibc", "musl", "macos", "fail-on", "pyodide-lock")
 
 
 def project_dir(inputs: list[str]) -> Path:
@@ -198,6 +204,7 @@ CELL = {
     Status.MISSING: ("✗ missing", "red"),
     Status.UNKNOWN: ("? unknown", "dim"),
     Status.NOT_NEEDED: ("–", "dim"),
+    Status.BUNDLED: ("✓ bundled", "green"),
 }
 
 
@@ -257,7 +264,24 @@ def render_explain(rows: list[Row], targets: list[Target], style: Style) -> list
     return out
 
 
-def report_json(rows: list[Row], targets: list[Target], sources: list[str], skipped: list, explained: bool) -> str:
+def bundled_line(rows: list[Row], lock: PyodideLock) -> str:
+    def one(r: Row) -> str:
+        have = lock.packages[r.package.key]
+        pinned = r.package.version
+        return f"{r.package.name} {have}" + (f" (you pinned {pinned})" if pinned and pinned != have else "")
+
+    noun = "package comes" if len(rows) == 1 else "packages come"
+    return f"{len(rows)} {noun} from Pyodide {lock.pyodide_version}'s own builds: " + ", ".join(map(one, rows))
+
+
+def report_json(
+    rows: list[Row],
+    targets: list[Target],
+    sources: list[str],
+    skipped: list,
+    explained: bool,
+    pyodide_lock: PyodideLock | None = None,
+) -> str:
     multi_py = len({t.python for t in targets}) > 1
     gaps = [r for r in rows if not r.ok]
 
@@ -268,6 +292,8 @@ def report_json(rows: list[Row], targets: list[Target], sources: list[str], skip
             "error": r.package.error,
             "results": {t.label(multi_py): r.results[t].value for t in targets},
         }
+        if pyodide_lock and Status.BUNDLED in r.results.values():
+            out["bundled"] = pyodide_lock.packages[r.package.key]
         if explained:
             out["rejected"] = {
                 t.label(multi_py): [{"file": f, "reason": why} for f, why in explain(r.package.files or [], t)]
@@ -317,7 +343,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         sources = load_inputs(args.inputs or ["."])
         fail_on = args.fail_on or config.get("fail-on", "source")
-    except (TargetError, SourceError, DockerfileError, OSError) as e:
+        pyodide_lock = None
+        if lock_spec := args.pyodide_lock or config.get("pyodide-lock"):
+            pyodide_lock = load_pyodide_lock(lock_spec)
+            check_targets(pyodide_lock, targets)
+    except (TargetError, SourceError, DockerfileError, PyodideLockError, OSError) as e:
         print(f"wheelgap: error: {e}", file=sys.stderr)
         return 2
     except Exception as e:  # malformed TOML and friends
@@ -328,6 +358,8 @@ def main(argv: list[str] | None = None) -> int:
     fill_all(packages, refresh=args.online)
     skipped = [p for p in packages if p.skip]
     rows = [r for r in check(sources, targets) if r.needed]
+    if pyodide_lock:
+        apply_bundled(rows, targets, pyodide_lock)
     rows.sort(key=lambda r: r.package.key)
     gaps = [r for r in rows if not r.ok]
     source_labels = [s.label for s in sources]
@@ -336,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
     code = 0 if args.exit_zero or not failing else 1
 
     if args.json:
-        print(report_json(rows, targets, source_labels, skipped, args.explain))
+        print(report_json(rows, targets, source_labels, skipped, args.explain, pyodide_lock))
         return code
 
     style = Style(use_color(args.color))
@@ -359,6 +391,10 @@ def main(argv: list[str] | None = None) -> int:
                 print()
             for ln in render_explain(gaps, targets, style):
                 print(ln)
+
+    bundled = [r for r in rows if Status.BUNDLED in r.results.values()]
+    if bundled and pyodide_lock:
+        print(style.dim(bundled_line(bundled, pyodide_lock)))
 
     if skipped:
         names = ", ".join(f"{p.name} ({p.skip})" for p in skipped)

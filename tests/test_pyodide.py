@@ -1,0 +1,102 @@
+import json
+
+import pytest
+
+from wheelgap import pypi
+from wheelgap.cli import main
+from wheelgap.pyodide import PyodideLockError, load_pyodide_lock, parse_pyodide_lock
+
+
+@pytest.fixture
+def lock(fixtures):
+    return str(fixtures / "pyodide-lock.json")
+
+
+def run(capsys, *argv):
+    code = main(list(argv))
+    out = capsys.readouterr()
+    return code, out.out, out.err
+
+
+def test_parse_keeps_only_packages_by_canonical_name(lock):
+    parsed = load_pyodide_lock(lock)
+    assert parsed.python == (3, 13) and parsed.abi == "2025_0" and parsed.pyodide_version == "0.29.0"
+    assert parsed.packages == {"fastlib": "2.0.0", "markupsafe": "3.0.2"}  # no cpython_module / shared_library
+
+
+def test_bundled_package_counts_as_available(capsys, fake_pypi, lock):
+    code, out, _ = run(
+        capsys, "fastlib==2.0.0", "nowheels==0.9", "-p", "3.13", "-t", "pyodide", "--pyodide-lock", lock, "--all"
+    )
+    assert code == 1  # nowheels is still missing
+    assert "✓ bundled" in out
+    assert "1 package comes from Pyodide 0.29.0's own builds: fastlib 2.0.0" in out
+    assert "nowheels" in out and "✗ missing" in out
+
+
+def test_bundled_only_is_a_pass(capsys, fake_pypi, lock):
+    code, out, _ = run(capsys, "fastlib==2.0.0", "-p", "3.13", "-t", "pyodide", "--pyodide-lock", lock)
+    assert code == 0
+    assert "has a wheel" in out
+
+
+def test_different_bundled_version_is_flagged(capsys, fake_pypi, tmp_path):
+    path = tmp_path / "pyodide-lock.json"
+    info = {"abi_version": "2025_0", "python": "3.13.2", "version": "0.29.0"}
+    path.write_text(json.dumps({"info": info, "packages": {"nowheels": {"name": "nowheels", "version": "0.8"}}}))
+    code, out, _ = run(capsys, "nowheels==0.9", "-p", "3.13", "-t", "pyodide", "--pyodide-lock", str(path))
+    assert code == 0
+    assert "nowheels 0.8 (you pinned 0.9)" in out
+
+
+def test_json_and_other_targets(capsys, fake_pypi, lock):
+    code, out, _ = run(
+        capsys, "fastlib==2.0.0", "-p", "3.13", "-t", "pyodide,musl-aarch64", "--pyodide-lock", lock, "--json"
+    )
+    fastlib = next(p for p in json.loads(out)["packages"] if p["name"] == "fastlib")
+    # Only the pyodide target changes; fastlib still builds from source on Alpine ARM.
+    assert fastlib["results"] == {"pyodide": "bundled", "musl-aarch64": "source"}
+    assert fastlib["bundled"] == "2.0.0"
+    assert code == 1
+
+
+def test_lock_for_another_python_is_an_error(capsys, fake_pypi, lock):
+    code, _, err = run(capsys, "fastlib==2.0.0", "-p", "3.12", "-t", "pyodide", "--pyodide-lock", lock)
+    assert code == 2
+    assert "is for Python 3.13 (Pyodide 0.29.0)" in err and "-p 3.13 -t pyodide" in err
+
+
+def test_abi_that_doesnt_match_python_is_an_error():
+    data = {"info": {"abi_version": "2024_0", "python": "3.13.0"}, "packages": {}}
+    with pytest.raises(PyodideLockError, match="abi_version 2024_0 doesn't match Python 3.13"):
+        parse_pyodide_lock(data, "x.json")
+
+
+def test_not_a_lockfile(capsys, fake_pypi, tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    code, _, err = run(capsys, "fastlib==2.0.0", "-p", "3.13", "-t", "pyodide", "--pyodide-lock", str(bad))
+    assert code == 2 and "not valid JSON" in err
+    bad.write_text('{"packages": {}}')
+    code, _, err = run(capsys, "fastlib==2.0.0", "-p", "3.13", "-t", "pyodide", "--pyodide-lock", str(bad))
+    assert code == 2 and "not a pyodide-lock.json" in err
+
+
+def test_url_is_fetched(capsys, fake_pypi, lock, monkeypatch):
+    fake_index = pypi.fetch_json
+    lock_data = json.loads(open(lock).read())
+
+    def fetch_json(url, timeout=20.0):
+        return lock_data if url.endswith("pyodide-lock.json") else fake_index(url, timeout)
+
+    monkeypatch.setattr(pypi, "fetch_json", fetch_json)
+    url = "https://cdn.example/pyodide/v0.29.0/full/pyodide-lock.json"
+    code, out, _ = run(capsys, "fastlib==2.0.0", "-p", "3.13", "-t", "pyodide", "--pyodide-lock", url)
+    assert code == 0
+
+
+def test_lock_from_pyproject(capsys, fake_pypi, lock, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(f'[tool.wheelgap]\npyodide-lock = "{lock}"\n'.replace("\\", "/"))
+    code, out, _ = run(capsys, "fastlib==2.0.0", "-p", "3.13", "-t", "pyodide")
+    assert code == 0
