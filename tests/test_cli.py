@@ -1,5 +1,10 @@
 import json
+import sys
+import sysconfig
 
+import pytest
+
+from wheelgap import cli
 from wheelgap.cli import main
 
 
@@ -83,3 +88,15 @@ def test_bad_pyproject_exit_2(capsys, fixtures, tmp_path):
     (tmp_path / "pyproject.toml").write_text("[tool.wheelgap]\nglibc = 2.31\n")
     code, _, err = run(capsys, str(tmp_path))
     assert code == 2 and "glibc must be a string" in err
+
+
+def test_running_python_reports_freethreaded(monkeypatch):
+    monkeypatch.setattr(sysconfig, "get_config_var", lambda name: 1 if name == "Py_GIL_DISABLED" else None)
+    assert cli.running_python() == f"{sys.version_info.major}.{sys.version_info.minor}t"
+
+
+@pytest.mark.skipif(not sysconfig.get_config_var("Py_GIL_DISABLED"), reason="needs a free-threaded build")
+def test_default_python_on_freethreaded_build(capsys, fixtures):
+    code = main([str(fixtures / "pylockproj"), "-t", "linux-aarch64", "--json"])
+    assert code in (0, 1)
+    assert json.loads(capsys.readouterr().out)["targets"][0]["python"].endswith("t")
