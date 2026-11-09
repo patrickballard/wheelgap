@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `linux-aarch64`, `linux-armv7l`, `linux-ppc64le`, `linux-s390x` and `linux-riscv64` no longer accept `manylinux` wheels older than glibc 2.17 (e.g. `manylinux_2_12_aarch64`), matching pip: those arches had no manylinux before manylinux2014. (#92, thanks [@shounakjoshi88-a11y](https://github.com/shounakjoshi88-a11y))
+
 ## 0.6.1 (2026-11-09)
 
 Two more lockfile formats, and safer `--pyodide-lock` fetching.
@@ -14,7 +16,6 @@ Two more lockfile formats, and safer `--pyodide-lock` fetching.
 - `--pyodide-lock` refuses plain `http://` URLs (a lockfile fetched without TLS could be changed to mark anything as bundled), names the URL when a fetch fails, and no longer counts test bundles such as `aiohttp-tests` (shipped as `.tar` files, not wheels) as bundled packages. (#68, thanks [@SatriaBagusNurhadianto](https://github.com/SatriaBagusNurhadianto))
 - A malformed `Pipfile.lock` (a section or package entry that isn't a JSON object) is now a clear error naming it, instead of an `AttributeError`. (#59, thanks [@chiragjangiir](https://github.com/chiragjangiir))
 - The summary line says "1 of 1 package", not "1 of 1 packages". (#81, thanks [@HarshRajSinghania](https://github.com/HarshRajSinghania))
-- `linux-aarch64`, `linux-armv7l`, `linux-ppc64le`, `linux-s390x` and `linux-riscv64` no longer accept `manylinux` wheels older than glibc 2.17 (e.g. `manylinux_2_12_aarch64`), matching pip: those arches had no manylinux before manylinux2014. (#92, thanks [@shounakjoshi88-a11y](https://github.com/shounakjoshi88-a11y))
 
 ## 0.6.0 (2026-11-09)
 

@@ -79,7 +79,7 @@ def test_manylinux_stops_at_2_17_outside_x86_and_i686():
     assert "manylinux_2_5_x86_64" in manylinux_platforms("x86_64", (2, 28))
     assert "manylinux_2_12_x86_64" in manylinux_platforms("x86_64", (2, 28))
     assert "manylinux_2_5_i686" in manylinux_platforms("i686", (2, 28))
-    # pip's 2.17 floor is a glibc-major-2 rule: a future major 3 starts fresh at every minor
+    # pip's 2.17 floor is a glibc-major-2 rule: it doesn't apply to a future glibc major 3
     assert "manylinux_3_12_aarch64" in manylinux_platforms("aarch64", (3, 20))
 
 
