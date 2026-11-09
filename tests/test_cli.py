@@ -267,6 +267,25 @@ def test_list_targets_respects_compatibility_overrides(capsys):
     assert "macOS <= 13.0" in by_name["macos-x86_64"]
 
 
+def test_mobile_flags_and_config(capsys, fake_pypi, tmp_path, monkeypatch):
+    code, out, _ = run(capsys, "--list-targets", "--ios", "16.4", "--android-api", "30", "--json")
+    by_name = {row["name"]: row["accepts"] for row in json.loads(out)}
+    assert by_name["ios-arm64"] == "ios arm64_iphoneos, iOS <= 16.4 (wheels only; -t mobile, not in -t all)"
+    assert by_name["android-x86_64"] == "android x86_64, API level <= 30 (wheels only; -t mobile, not in -t all)"
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pyproject.toml").write_text('[tool.wheelgap]\nios = "15.0"\nandroid-api = "28"\n')
+    by_name = {row["name"]: row["accepts"] for row in json.loads(run(capsys, "--list-targets", "--json")[1])}
+    assert "iOS <= 15.0" in by_name["ios-arm64"] and "API level <= 28" in by_name["android-arm64"]
+    code, out, _ = run(capsys, "nowheels==0.9", "purewheel==3.1", "-p", "3.13", "-t", "mobile", "--json")
+    data = json.loads(out)
+    assert code == 1
+    statuses = {p["name"]: set(p["results"].values()) for p in data["packages"]}
+    assert statuses == {"nowheels": {"missing"}, "purewheel": {"wheel"}}
+    code, _, err = run(capsys, "six", "-p", "3.12", "-t", "android")
+    assert code == 2 and "from Python 3.13" in err
+
+
 def test_list_targets_rejects_invalid_compatibility_version(capsys):
     code, out, err = run(capsys, "--list-targets", "--glibc", "bad")
     assert code == 2 and not out

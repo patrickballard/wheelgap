@@ -19,7 +19,9 @@ from .pypi import check_index_url, fill_all
 from .sources import SourceError, load_inputs
 from .targets import (
     ALIASES,
+    DEFAULT_ANDROID_API,
     DEFAULT_GLIBC,
+    DEFAULT_IOS,
     DEFAULT_MACOS,
     DEFAULT_MUSL,
     DEFAULT_PLATFORMS,
@@ -29,6 +31,7 @@ from .targets import (
     Target,
     TargetError,
     build_targets,
+    parse_api_level,
     parse_version_pair,
     resolve_platform,
 )
@@ -97,6 +100,12 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--glibc", metavar="X.Y", help=f"glibc version for linux-* targets (default: {DEFAULT_GLIBC})")
     p.add_argument("--musl", metavar="X.Y", help=f"musl version for musl-* targets (default: {DEFAULT_MUSL})")
     p.add_argument("--macos", metavar="X.Y", help=f"minimum macOS for macos-* targets (default: {DEFAULT_MACOS})")
+    p.add_argument("--ios", metavar="X.Y", help=f"minimum iOS for ios-* targets (default: {DEFAULT_IOS})")
+    p.add_argument(
+        "--android-api",
+        metavar="N",
+        help=f"minimum Android API level for android-* targets (default: {DEFAULT_ANDROID_API})",
+    )
     p.add_argument(
         "--dockerfile",
         metavar="PATH",
@@ -134,7 +143,7 @@ def make_parser() -> argparse.ArgumentParser:
 
 FAIL_ON = ("source", "missing")
 LIST_KEYS = ("python", "targets")
-STR_KEYS = ("glibc", "musl", "macos", "fail-on", "pyodide-lock")
+STR_KEYS = ("glibc", "musl", "macos", "ios", "android-api", "fail-on", "pyodide-lock")
 
 
 def project_dir(inputs: list[str]) -> Path:
@@ -364,6 +373,7 @@ def print_target_list(args: argparse.Namespace, config: dict) -> None:
         "manylinux": ("glibc", args.glibc or config.get("glibc", DEFAULT_GLIBC)),
         "musllinux": ("musl", args.musl or config.get("musl", DEFAULT_MUSL)),
         "macos": ("macOS", args.macos or config.get("macos", DEFAULT_MACOS)),
+        "ios": ("iOS", args.ios or config.get("ios", DEFAULT_IOS)),
     }
     limits = {}
     for family, (label, version) in versions.items():
@@ -371,6 +381,9 @@ def print_target_list(args: argparse.Namespace, config: dict) -> None:
         limits[family] = f", {label} <= {major}.{minor}"
     pythons = ", ".join(f"{a}.{b}" for a, b in PYODIDE_PLATFORMS)
     limits["pyodide"] = f", Python {pythons} (not in -t all)"
+    limits["ios"] += " (wheels only; -t mobile, not in -t all)"
+    api = parse_api_level(args.android_api or config.get("android-api", DEFAULT_ANDROID_API))
+    limits["android"] = f", API level <= {api} (wheels only; -t mobile, not in -t all)"
 
     rows = [
         (name, aliases[name], f"{family} {arch}{limits.get(family, '')}{' (not in -t all)' * (arch in EXTRA_ARCHES)}")
@@ -454,6 +467,8 @@ def main(argv: list[str] | None = None) -> int:
             args.glibc or config.get("glibc", DEFAULT_GLIBC),
             args.musl or config.get("musl", DEFAULT_MUSL),
             args.macos or config.get("macos", DEFAULT_MACOS),
+            args.ios or config.get("ios", DEFAULT_IOS),
+            args.android_api or config.get("android-api", DEFAULT_ANDROID_API),
         )
         check_index_url()
         sources = load_inputs(args.inputs or ["."])

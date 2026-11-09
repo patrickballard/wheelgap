@@ -116,12 +116,19 @@ _LIBC = {"manylinux": "glibc", "musllinux": "musl", "macosx": "macOS"}
 
 
 _WASM_RE = re.compile(r"^(?:pyodide|pyemscripten|emscripten)_[0-9_]+_wasm32$")
+_IOS_RE = re.compile(r"^ios_(\d+)_(\d+)_(.+)$")
+_ANDROID_RE = re.compile(r"^android_(\d+)_(.+)$")
 
 
 def _platform_reason(plat: str, target: Target) -> str:
     family, arch = PLATFORMS[target.platform]
     if family == "pyodide" and _WASM_RE.match(plat):
         return f"{plat} is for a different Pyodide ABI than Python {target.python}"
+    if family == "ios" and (m := _IOS_RE.match(plat)) and m.group(3) == arch:
+        have = ".".join(map(str, target.ios))
+        return f"{plat} needs iOS {m.group(1)}.{m.group(2)}, newer than {have} (--ios)"
+    if family == "android" and (m := _ANDROID_RE.match(plat)) and m.group(2) == arch:
+        return f"{plat} needs Android API level {m.group(1)}, newer than {target.android_api} (--android-api)"
     m = _PLAT_RE.match(plat)
     if m:
         kind, major, minor, wheel_arch = m.group(1), int(m.group(2)), int(m.group(3)), m.group(4)
@@ -179,6 +186,8 @@ _OS_PREFIX: dict[str, tuple[str, ...]] = {
     "macos": ("macosx",),
     "windows": ("win",),
     "pyodide": ("pyodide_", "pyemscripten_", "emscripten_"),
+    "ios": ("ios_",),
+    "android": ("android_",),
 }
 
 
