@@ -286,7 +286,7 @@ def report_json(
     gaps = [r for r in rows if not r.ok]
 
     def package(r: Row) -> dict:
-        out = {
+        out: dict[str, object] = {
             "name": r.package.name,
             "version": r.package.version,
             "error": r.package.error,

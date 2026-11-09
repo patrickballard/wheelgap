@@ -124,11 +124,11 @@ def rejection(filename: str, target: Target) -> str | None:
 
 
 _PY_MINOR_RE = re.compile(r"^(?:cp|py)3(\d+)$")
-_OS_PREFIX = {
-    "manylinux": "manylinux",
-    "musllinux": "musllinux",
-    "macos": "macosx",
-    "windows": "win",
+_OS_PREFIX: dict[str, tuple[str, ...]] = {
+    "manylinux": ("manylinux",),
+    "musllinux": ("musllinux",),
+    "macos": ("macosx",),
+    "windows": ("win",),
     "pyodide": ("pyodide_", "pyemscripten_", "emscripten_"),
 }
 

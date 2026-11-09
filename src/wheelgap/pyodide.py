@@ -45,7 +45,7 @@ def parse_pyodide_lock(data: dict, source: str) -> PyodideLock:
     if abi and expected and abi != expected:
         raise PyodideLockError(f"{source}: abi_version {abi} doesn't match Python {major}.{minor} ({expected})")
     bundled = {
-        canonicalize_name(p["name"]): str(p["version"])
+        str(canonicalize_name(p["name"])): str(p["version"])
         for p in packages.values()
         # Also listed: CPython stdlib modules, shared libraries and test bundles, which aren't PyPI packages.
         if isinstance(p, dict) and p.get("package_type", "package") == "package" and "name" in p and "version" in p

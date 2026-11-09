@@ -75,7 +75,8 @@ def parse_uv_lock(path: Path) -> Source:
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     manifest = data.get("manifest", {})
     members = {canonicalize_name(m) for m in manifest.get("members", [])}
-    source = Source(path.name, edges={})
+    edges: dict[int, list[Edge]] = {}
+    source = Source(path.name, edges=edges)
     for p in data.get("package", []):
         src = p.get("source", {})
         pkg = Package(p["name"], p.get("version"), origin=path.name)
@@ -89,7 +90,7 @@ def parse_uv_lock(path: Path) -> Source:
             pkg.files = files
         i = len(source.packages)
         source.packages.append(pkg)
-        source.edges[i] = _uv_edges(p)
+        edges[i] = _uv_edges(p)
         if kind in ("editable", "virtual", "directory") or pkg.key in members:
             source.roots.append(i)
     for group in manifest.get("dependency-groups", {}).values():

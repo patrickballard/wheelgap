@@ -29,6 +29,7 @@ uv run wheelgap numpy -t all     # try it
    ```bash
    uv run --group dev ruff format .
    uv run --group dev ruff check .
+   uv run --group dev mypy
    uv run --group dev pytest
    ```
 3. Open a PR and put `Closes #123` in the description, so the issue closes when it's merged.

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from functools import cached_property
 
 from packaging import tags
+from packaging.tags import Tag
 
 # Short platform name -> (family, arch)
 PLATFORMS: dict[str, tuple[str, str]] = {
@@ -194,7 +195,7 @@ class Target:
         }
 
     @cached_property
-    def tags(self) -> frozenset[tags.Tag]:
+    def tags(self) -> frozenset[Tag]:
         version = (self.major, self.minor)
         interp = f"cp{self.major}{self.minor}"
         abi = interp + ("t" if self.freethreaded else "")
@@ -203,7 +204,7 @@ class Target:
         supported.update(tags.compatible_tags(version, interp, plats))
         return frozenset(supported)
 
-    def accepts(self, wheel_tags: frozenset[tags.Tag]) -> bool:
+    def accepts(self, wheel_tags: frozenset[Tag]) -> bool:
         return not self.tags.isdisjoint(wheel_tags)
 
 
