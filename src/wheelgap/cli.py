@@ -426,6 +426,8 @@ def _md(text: str) -> str:
 
 def _code(text: str) -> str:
     """A Markdown code span showing text exactly (paths and URLs stay readable and unlinked)."""
+    if not text:
+        return '`""`'  # `` isn't a code span, and would pair up with the backticks after it
     fence = "`" * (max((len(run) for run in re.findall(r"`+", text)), default=0) + 1)
     pad = " " if text.startswith("`") or text.endswith("`") else ""
     return f"{fence}{pad}{text}{pad}{fence}"  # only used outside tables, so | needs no escaping

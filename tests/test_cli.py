@@ -501,3 +501,15 @@ def test_markdown_helpers():
     assert _code("a`b") == "``a`b``"
     assert _code("`x`") == "`` `x` ``"
     assert _code("a|b") == "`a|b`"
+    assert _code("") == '`""`'
+
+
+def test_markdown_lookup_errors_and_empty_names(capsys, fake_pypi, tmp_path):
+    req = tmp_path / "requirements.txt"
+    req.write_text("nosuchpkg==1.0\n-e git+https://x.example/r.git#egg=\n")
+    code, out, _ = run(capsys, str(req), "-p", "3.13", "-t", "win-amd64", "--markdown")
+    lines = out.splitlines()
+    assert any(ln.startswith("Could not check nosuchpkg: `") for ln in lines)
+    assert any(
+        ln.startswith('Skipped 1 non-index package: `""`') or '`""`' in ln for ln in lines if ln.startswith("Skipped")
+    )
