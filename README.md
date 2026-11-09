@@ -248,13 +248,33 @@ Sites like [pyreadiness.org](https://pyreadiness.org) and [free-threaded wheels]
 
 wheelgap is growing into **caniuse for Python wheels**: an open map of which packages have wheels for which platforms. The CLI stays focused, and around it come a nightly tracker of the most-used PyPI packages, a community knowledge base of workarounds, and campaigns to help upstream projects ship missing wheels. **[Read the roadmap and join the discussion →](https://github.com/wheelgap/wheelgap/discussions/43)**
 
-Next up for the CLI: private indexes (#19), and "nearest version with a wheel" hints (#20).
+Next up for the CLI, and all open for contributors:
 
-Contributions welcome. Issues labelled [good first issue](https://github.com/wheelgap/wheelgap/labels/good%20first%20issue) are a good start, and [CONTRIBUTING.md](CONTRIBUTING.md) has the 3-command dev setup. Questions are welcome in [Discussions](https://github.com/wheelgap/wheelgap/discussions).
+- "nearest version with a wheel" hints (#20)
+- private indexes through the simple API (#19)
+- `wheelgap diff`: the new gaps between two lockfiles, for PR comments (#51)
+- checking only the extras and dependency groups you install (#87)
 
-## Maintainer
+The [roadmap label](https://github.com/wheelgap/wheelgap/labels/roadmap) has the rest.
 
-wheelgap is created and maintained by [@patrickballard](https://github.com/patrickballard), with a lot of help from [its contributors](https://github.com/wheelgap/wheelgap/graphs/contributors). Thank you, all of you!
+### Contributing
+
+Contributions are welcome, and pull requests usually get a review within hours.
+
+- **New here?** Issues labelled [good first issue](https://github.com/wheelgap/wheelgap/labels/good%20first%20issue) say which files to change and what to test.
+- **Done one or two?** [help wanted](https://github.com/wheelgap/wheelgap/labels/help%20wanted) issues are bigger and more interesting.
+
+[CONTRIBUTING.md](CONTRIBUTING.md) has the 3-command dev setup, or you can start in the browser with no setup:
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/wheelgap/wheelgap)
+
+Questions are welcome in [Discussions](https://github.com/wheelgap/wheelgap/discussions).
+
+## Contributors
+
+wheelgap is created and maintained by [@patrickballard](https://github.com/patrickballard), with a lot of help from these people. Thank you, all of you!
+
+[![wheelgap's contributors](https://contrib.rocks/image?repo=wheelgap/wheelgap)](https://github.com/wheelgap/wheelgap/graphs/contributors)
 
 ## License
 

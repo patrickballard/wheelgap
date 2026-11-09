@@ -17,9 +17,11 @@ uv run --group dev ruff check .  # lint
 uv run wheelgap numpy -t all     # try it
 ```
 
+No local setup? [Open the repo in GitHub Codespaces](https://codespaces.new/wheelgap/wheelgap): the dev container comes with uv and the dev tools installed.
+
 ## Picking something to work on
 
-- Issues labelled [`good first issue`](https://github.com/wheelgap/wheelgap/labels/good%20first%20issue) are scoped to be doable in an evening, and each one says which files to touch and what to test. [`help wanted`](https://github.com/wheelgap/wheelgap/labels/help%20wanted) issues are bigger.
+- Issues labelled [`good first issue`](https://github.com/wheelgap/wheelgap/labels/good%20first%20issue) are scoped to be doable in an evening, and each one says which files to touch and what to test. [`help wanted`](https://github.com/wheelgap/wheelgap/labels/help%20wanted) issues are bigger: a good next step once you've done one or two. The [`roadmap`](https://github.com/wheelgap/wheelgap/labels/roadmap) ones shape where wheelgap goes next.
 - **Opening a PR is how you take an issue.** Comments like "I'd like to take this" are welcome, but they don't reserve anything: the first pull request opened for an issue is the one we review and merge, and a later one for the same issue is closed with a pointer to another issue. So check for an existing PR before you start, and open yours early (a draft is fine).
 - **Want to add something that isn't an issue yet?** Post it in [Discussions → Ideas](https://github.com/wheelgap/wheelgap/discussions/categories/ideas) first, so we can agree it fits before you spend time on it. Small fixes (typos, docs, obvious bugs) can go straight to a PR.
 
@@ -44,13 +46,18 @@ The PR template has a short checklist:
 
 ## What to expect
 
-- A review within a day or so. Most PRs need a small change or two, which is normal.
-- PRs are squash-merged, so don't worry about tidying your commit history.
-- You'll be credited in the release notes.
+- A review within hours, usually. If something needs changing, the maintainer usually pushes the fix to your branch and says what changed, rather than sending you a list. So leave "Allow edits by maintainers" on.
+- PRs are squash-merged, so don't worry about tidying your commit history. You stay the author of the commit.
+- You're credited in the CHANGELOG and the release notes, and you appear in the README's contributors section.
+- When your PR is merged, we suggest another issue that fits, if you'd like one.
 
 ## AI-assisted contributions
 
-Using AI tools is fine. Please make sure you've run the code and the tests yourself and can explain what the change does, the same as for anything you write by hand.
+Using AI tools (coding agents, bug-fix bots and the like) is fine, and [AGENTS.md](AGENTS.md) helps them follow the house rules. We ask three things:
+
+- **Say so in the PR description**, with the tool's name. It doesn't count against you; it tells the reviewer where to look harder.
+- **You're responsible for the diff.** Read it, run the checks yourself, and be ready to explain what it does, the same as for code you write by hand.
+- **One issue per PR**, and only for issues that are open. Pull requests that look generated and unchecked, or that change things nobody asked for, may be closed.
 
 ## Reporting a wrong result
 

@@ -11,3 +11,4 @@ Closes #
 - [ ] `uv run --group dev mypy` and `uv run --group dev pytest` pass
 - [ ] `CHANGELOG.md` has a line under `## Unreleased` (if users would notice the change)
 - [ ] README updated (if there's a new flag, target or input format)
+- [ ] If an AI tool helped, I've named it in the description and checked the change myself
