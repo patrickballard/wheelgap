@@ -232,9 +232,9 @@ def test_all_keeps_the_common_eight_and_everything_adds_the_rest():
     assert len(ts) == 16 and "pyodide" not in EVERY_NATIVE_PLATFORM
 
 
-def test_plain_linux_arch_wheels_like_pip():
+def test_plain_linux_arch_wheels_count_on_glibc_only():
     # PyPI accepts linux_armv7l uploads for the Raspberry Pi (grpcio ships them), and pip installs them.
     assert accepts(t("linux-armv7l"), "grpcio-1.85.1-cp313-cp313-linux_armv7l.whl")
     assert not accepts(t("linux-aarch64"), "grpcio-1.85.1-cp313-cp313-linux_armv7l.whl")
-    # They're glibc builds, so they don't count on Alpine.
+    # They're glibc builds, so they don't count on Alpine (pip would take them, then fail to load them).
     assert not accepts(t("musl-armv7l"), "grpcio-1.85.1-cp313-cp313-linux_armv7l.whl")
