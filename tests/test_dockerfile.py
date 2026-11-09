@@ -156,9 +156,12 @@ def test_chain_of_stages_and_platforms(tmp_path):
     assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.13", "linux-x86_64")
 
 
-def test_stage_names_are_case_insensitive(tmp_path):
-    text = "FROM python:3.13 as Base\nFROM BASE\n"
+def test_stage_names_are_lowercased_like_docker(tmp_path):
+    # Docker lowercases the AS name but looks a reference up as written (and image names are lowercase).
+    text = "FROM python:3.13 as Base\nFROM base\n"
     assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.13", "linux-x86_64")
+    with pytest.raises(DockerfileError, match="FROM BASE: not an earlier stage"):
+        read_dockerfile(_dockerfile(tmp_path, "FROM python:3.13 as Base\nFROM BASE\n"))
 
 
 def test_unknown_stage_is_a_clear_error(tmp_path):
@@ -189,3 +192,51 @@ def test_heredoc_bodies_are_not_from_lines(tmp_path):
     )
     assert last_from(text) == "base"
     assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.13", "musl-x86_64", musl="1.2")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "RUN echo $((1<<SHIFT))",
+        "RUN echo $((1 << BITS))",
+        'RUN python -c "print(1<<n)"',
+        "CMD cat <<EOF",
+        "ENV X=<<EOF",
+        'LABEL note="a<<b"',
+        'RUN ["sh", "-c", "cat <<EOF"]',
+        "RUN cat <<<word",
+    ],
+)
+def test_things_that_only_look_like_heredocs(tmp_path, line):
+    # None of these open a heredoc in Docker, so the final FROM must still be found.
+    text = f"FROM python:3.13-alpine AS base\n{line}\nFROM python:3.12-slim\n"
+    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.12", "linux-x86_64")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "RUN <<END-OF-SCRIPT\nfrom a import b\nEND-OF-SCRIPT\n",
+        "COPY <<EOF.py /a.py\nfrom a import b\nEOF.py\n",
+        "RUN 3<<EOF cat <&3\nfrom a import b\nEOF\n",
+        "ONBUILD RUN <<EOF\nfrom a import b\nEOF\n",
+        "RUN <<EOF\necho foo \\\nEOF\n",  # a backslash inside a body doesn't join lines
+    ],
+)
+def test_real_heredocs_end_where_docker_ends_them(tmp_path, body):
+    text = f"FROM python:3.13-alpine AS base\n{body}FROM python:3.12-slim\n"
+    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.12", "linux-x86_64")
+
+
+def test_unterminated_heredoc_is_an_error(tmp_path):
+    with pytest.raises(DockerfileError, match="heredoc <<EOF is never closed"):
+        read_dockerfile(_dockerfile(tmp_path, "FROM python:3.13\nRUN <<EOF\necho\nFROM python:3.12\n"))
+
+
+def test_unknown_stage_lists_only_earlier_stages(tmp_path):
+    text = "FROM python:3.13-alpine AS base\nFROM bse AS final\n"
+    with pytest.raises(DockerfileError, match=r"not an earlier stage \(base\) or"):
+        read_dockerfile(_dockerfile(tmp_path, text))
+    # A stage built on a non-python image gets the usual image error, not a stage one.
+    with pytest.raises(DockerfileError, match="alpine: only the official python images"):
+        read_dockerfile(_dockerfile(tmp_path, "FROM alpine AS base\nFROM base\n"))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,29 +39,65 @@ class ImageTarget:
     musl: str | None = None
 
 
-# A heredoc start like `RUN <<EOF`, `<<-'EOF'` or `COPY <<"conf" /etc/x` (but not bash's `<<<`).
-_HEREDOC_RE = re.compile(r"(?<!<)<<(?!<)(-?)\s*([\"']?)([A-Za-z_][A-Za-z0-9_]*)\2")
+# BuildKit's heredoc rule: a shell-form word of RUN, COPY or ADD that starts with `<<` (or `<<-`),
+# optionally after a file descriptor number. The rest of the word is the delimiter.
+_HEREDOC_WORD_RE = re.compile(r"^\d*<<(-?)([^<]+)$")
+_HEREDOC_INSTRUCTIONS = {"RUN", "COPY", "ADD"}
+
+
+def _heredocs(instruction: str) -> list[tuple[bool, str]]:
+    """The heredocs an instruction opens, as (strip leading tabs, delimiter)."""
+    words = instruction.split(None, 2)
+    if words and words[0].upper() == "ONBUILD":
+        words = words[1:2] + (words[2].split(None, 1) if len(words) > 2 else [])
+    if len(words) < 2 or words[0].upper() not in _HEREDOC_INSTRUCTIONS or words[1].startswith("["):
+        return []  # other instructions and exec (JSON) form have no heredocs
+    lexer = shlex.shlex(words[1], posix=False)
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:  # an unbalanced quote: not something to guess about
+        return []
+    found = []
+    for token in tokens:
+        if m := _HEREDOC_WORD_RE.match(token):
+            delimiter = m.group(2)
+            if len(delimiter) >= 2 and delimiter[0] == delimiter[-1] and delimiter[0] in "'\"":
+                delimiter = delimiter[1:-1]
+            found.append((bool(m.group(1)), delimiter))
+    return found
 
 
 def _from_lines(text: str) -> list[str]:
     """The arguments of every FROM instruction in order, with line continuations joined.
 
-    Heredoc bodies are skipped, so a Python `from x import y` inside `RUN <<EOF` isn't read as a FROM.
+    Heredoc bodies (`RUN <<EOF ... EOF`) are skipped, so a Python `from x import y` in one isn't
+    read as a FROM. Bodies are read line by line as written, as Docker does.
     """
-    joined = re.sub(r"\\\r?\n", " ", text)
     found = []
-    pending: list[tuple[bool, str]] = []  # heredocs still open: (tabs stripped, delimiter)
-    for line in joined.splitlines():
+    pending: list[tuple[bool, str]] = []  # heredocs still open
+    parts: list[str] = []  # an instruction continued with a trailing backslash
+    for raw in text.splitlines():
+        line = raw.rstrip("\r")
         if pending:
             strip_tabs, delimiter = pending[0]
-            if (line.lstrip("\t") if strip_tabs else line).rstrip("\r") == delimiter:
+            if (line.lstrip("\t") if strip_tabs else line) == delimiter:
                 pending.pop(0)
             continue
-        words = line.strip().split(None, 1)
+        if parts and line.lstrip().startswith("#"):
+            continue  # comments inside a continued instruction are dropped
+        if line.rstrip().endswith("\\"):
+            parts.append(line.rstrip()[:-1])
+            continue
+        instruction = " ".join([*parts, line]).strip()
+        parts = []
+        words = instruction.split(None, 1)
         if len(words) == 2 and words[0].upper() == "FROM":
             found.append(words[1])
         elif words and not words[0].startswith("#"):
-            pending = [(bool(m.group(1)), m.group(3)) for m in _HEREDOC_RE.finditer(line)]
+            pending = _heredocs(instruction)
+    if pending:
+        raise DockerfileError(f"heredoc <<{pending[0][1]} is never closed")
     return found
 
 
@@ -102,18 +139,19 @@ def final_image(text: str) -> tuple[str, str | None]:
     builds on: a `--platform` on `FROM base` doesn't change what `base` was built for.
     """
     stages: dict[str, tuple[str, str | None]] = {}
-    image, platform = "", None
     lines = _from_lines(text)
     if not lines:
         raise DockerfileError("no FROM line found")
-    for args in lines:
+    for args in lines[:-1]:
         image, platform, stage = _split_from(args)
-        if (base := stages.get(image.lower())) is not None:
+        if (base := stages.get(image)) is not None:  # AS names are lowercased, references aren't
             image, platform = base
         if stage:
             stages[stage] = (image, platform)
-    bare = not any(c in image for c in ":/@$") and image.lower() not in (*IMAGE_NAMES, "scratch")
-    if stages and bare:
+    image, platform, _ = _split_from(lines[-1])
+    if (base := stages.get(image)) is not None:
+        return base
+    if stages and not any(c in image for c in ":/@$") and image.lower() not in (*IMAGE_NAMES, "scratch"):
         known = ", ".join(stages)
         raise DockerfileError(
             f"FROM {image}: not an earlier stage ({known}) or an official python image, pass -p/-t instead"
