@@ -64,7 +64,7 @@ def test_last_from_takes_the_final_stage():
         "    python:3.13-alpine\n"
         "COPY --from=build /wheels /wheels\n"
     )
-    assert last_from(text) == "--platform=linux/arm64      python:3.13-alpine"
+    assert last_from(text) == "--platform=linux/arm64     python:3.13-alpine"  # joined as Docker joins
     assert parse_from(last_from(text)) == ImageTarget("3.13", "musl-aarch64", musl="1.2")
 
 
@@ -245,3 +245,26 @@ def test_continuations_like_docker(tmp_path, text):
 )
 def test_lines_that_do_not_continue(tmp_path, text):
     assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.12", "linux-x86_64")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "FROM python:3.12-alpine AS build\nFROM --platform=linux/arm64 \\\n    python:3.11-slim \\\n# end\n",
+        "FROM python:3.12-alpine AS build\nFROM --platform=linux/arm64 python:3.11-slim \\",
+        "\ufeffFROM --platform=linux/arm64 python:3.11-slim\n",  # a UTF-8 BOM, which Docker strips
+        "FROM --platform=linux/arm64 python:3.1\\\n1-slim\n",  # no space is added at the join
+    ],
+)
+def test_final_line_edge_cases(tmp_path, text):
+    path = tmp_path / "Dockerfile"
+    path.write_text(text, encoding="utf-8")
+    assert read_dockerfile(path) == ImageTarget("3.11", "linux-aarch64")
+
+
+def test_escape_directive_rules(tmp_path):
+    # An unknown directive-looking comment ends the directives, so the later escape= is ignored.
+    text = "# version=2\n# escape=`\nFROM python:3.12-alpine\nRUN echo \\\nFROM python:3.11-slim\n"
+    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.12", "musl-x86_64", musl="1.2")
+    with pytest.raises(DockerfileError, match="invalid escape directive"):
+        read_dockerfile(_dockerfile(tmp_path, "# escape=x\nFROM python:3.12\n"))

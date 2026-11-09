@@ -38,7 +38,9 @@ class ImageTarget:
     musl: str | None = None
 
 
-_DIRECTIVE_RE = re.compile(r"^#\s*([A-Za-z]+)\s*=\s*(\S*)\s*$")
+_DIRECTIVE_RE = re.compile(r"^#\s*([A-Za-z]+)\s*=\s*(.+?)\s*$")
+_DIRECTIVES = {"syntax", "escape", "check"}  # the parser directives BuildKit knows
+
 # A Python import, e.g. inside a `RUN <<EOF` heredoc: never a valid FROM instruction.
 _PY_IMPORT_RE = re.compile(r"^from\s+\S+\s+import\s")
 
@@ -47,9 +49,11 @@ def _escape_char(lines: list[str]) -> str:
     """The `# escape=` parser directive (\\ by default, ` on Windows images)."""
     for line in lines:
         m = _DIRECTIVE_RE.match(line.strip())
-        if not m:
-            break  # directives must come first, before any comment, blank line or instruction
-        if m.group(1).lower() == "escape" and m.group(2) in ("`", "\\"):
+        if not m or m.group(1).lower() not in _DIRECTIVES:
+            break  # directives come first; any other line (even another comment) ends them
+        if m.group(1).lower() == "escape":
+            if m.group(2) not in ("`", "\\"):
+                raise DockerfileError(f"invalid escape directive {m.group(2)!r} (Docker accepts ` or \\)")
             return m.group(2)
     return "\\"
 
@@ -58,13 +62,20 @@ def _from_lines(text: str) -> list[str]:
     """The arguments of every FROM instruction in order, with line continuations joined as Docker joins them.
 
     Python `from x import y` lines (from a heredoc) are skipped. Other heredoc contents aren't parsed,
-    so a line in one that looks exactly like a FROM instruction would still be read as one.
+    so a line in one that looks exactly like a FROM instruction (say, SQL's `FROM base` naming a
+    stage) is still read as one: a known limit, pass -p/-t for such Dockerfiles.
     """
     lines = [raw.rstrip("\r") for raw in text.splitlines()]
     esc = re.escape(_escape_char(lines))
     continued = re.compile(rf"(?<!{esc}){esc}[ \t]*$")  # one escape char at the end, not two
     found = []
     parts: list[str] = []  # an instruction continued onto the next line
+
+    def finish(instruction: str) -> None:
+        words = instruction.split(None, 1)
+        if len(words) == 2 and words[0].upper() == "FROM" and not _PY_IMPORT_RE.match(instruction):
+            found.append(words[1])
+
     for line in lines:
         stripped = line.strip()
         if parts and (not stripped or stripped.startswith("#")):
@@ -74,11 +85,10 @@ def _from_lines(text: str) -> list[str]:
         if m := continued.search(line):
             parts.append(line[: m.start()])
             continue
-        instruction = " ".join([*parts, line]).strip()
+        finish("".join([*parts, line]).strip())  # Docker joins continued lines with nothing in between
         parts = []
-        words = instruction.split(None, 1)
-        if len(words) == 2 and words[0].upper() == "FROM" and not _PY_IMPORT_RE.match(instruction):
-            found.append(words[1])
+    if parts:  # the file ended mid-continuation: Docker still reads what's there
+        finish("".join(parts).strip())
     return found
 
 
@@ -187,6 +197,6 @@ def parse_image(image: str, platform: str | None = None) -> ImageTarget:
 
 def read_dockerfile(path: Path) -> ImageTarget:
     try:
-        return parse_image(*final_image(path.read_text(encoding="utf-8")))
+        return parse_image(*final_image(path.read_text(encoding="utf-8-sig")))
     except DockerfileError as e:
         raise DockerfileError(f"{path}: {e}") from None
