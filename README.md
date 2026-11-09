@@ -106,7 +106,7 @@ If you think wheelgap got a package wrong, that output (or `--json --explain`) i
 
 **Exit codes:** `0` no gaps, `1` gaps found, `2` bad input. `--exit-zero` always exits `0`. `--fail-on missing` (or `fail-on = "missing"` in `[tool.wheelgap]`) accepts source builds and only exits `1` when a package can't be installed at all.
 
-Use `-q` / `--quiet` (or `quiet = true` in `[tool.wheelgap]`) to show only the gap summary and package names. Clean runs are silent, JSON output is unchanged, and quiet text output cannot be combined with `--explain` (`--json --explain` works).
+Use `-q` / `--quiet` (or `quiet = true` in `[tool.wheelgap]`) to show only the gap summary and package names. Clean runs are silent, JSON and Markdown output are unchanged, and quiet text output cannot be combined with `--explain` (`--json --explain` and `--markdown --explain` work).
 
 ### Targets
 
@@ -151,7 +151,9 @@ Docker platform names also work with `-t`, for example `-t linux/amd64,linux/arm
     args: uv.lock -p 3.13 -t linux-x86_64,linux-aarch64
 ```
 
-The job fails when a dependency would build from source on a target you ship, for example when a dependency bump drops ARM wheels.
+The job fails when a dependency would build from source on a target you ship, for example when a dependency bump drops ARM wheels. The gap table also goes to the run's summary page (set `summary: false` to turn that off).
+
+Outside the Action, `--markdown` prints the same report as Markdown, for a job summary (`wheelgap --markdown >> "$GITHUB_STEP_SUMMARY"`) or a PR comment. With `--explain`, the rejected wheels go in a collapsed section.
 
 ### With pre-commit
 
