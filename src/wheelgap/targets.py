@@ -28,17 +28,28 @@ PLATFORMS: dict[str, tuple[str, str]] = {
     "musl-ppc64le": ("musllinux", "ppc64le"),
     "musl-s390x": ("musllinux", "s390x"),
     "musl-riscv64": ("musllinux", "riscv64"),
+    # PEP 730 / PEP 738: the arch is the multiarch / ABI part of the wheel tag.
+    "ios-arm64": ("ios", "arm64_iphoneos"),
+    "ios-simulator-arm64": ("ios", "arm64_iphonesimulator"),
+    "ios-simulator-x86_64": ("ios", "x86_64_iphonesimulator"),
+    "android-arm64": ("android", "arm64_v8a"),
+    "android-x86_64": ("android", "x86_64"),
 }
+
+# Platforms whose installers can't build sdists: Pyodide has no compiler, and iOS/Android
+# dependencies are installed by cross-platform pip runs, which need --only-binary :all:.
+WHEEL_ONLY_FAMILIES = {"pyodide", "ios", "android"}
 
 # Less common Linux architectures: checked by name, or with `-t everything`.
 EXTRA_ARCHES = {"armv7l", "ppc64le", "s390x", "riscv64"}
 
 # `-t all` means the eight common native platforms; `-t everything` adds the extra Linux
-# architectures. Pyodide is only checked when asked for by name.
+# architectures. Pyodide, iOS and Android are only checked when asked for by name (or `-t mobile`).
 NATIVE_PLATFORMS = [
-    name for name, (family, arch) in PLATFORMS.items() if family != "pyodide" and arch not in EXTRA_ARCHES
+    name for name, (family, arch) in PLATFORMS.items() if family not in WHEEL_ONLY_FAMILIES and arch not in EXTRA_ARCHES
 ]
-EVERY_NATIVE_PLATFORM = [name for name, (family, _) in PLATFORMS.items() if family != "pyodide"]
+EVERY_NATIVE_PLATFORM = [name for name, (family, _) in PLATFORMS.items() if family not in WHEEL_ONLY_FAMILIES]
+MOBILE_PLATFORMS = [name for name, (family, _) in PLATFORMS.items() if family in ("ios", "android")]
 
 ALIASES: dict[str, str] = {
     "linux": "linux-x86_64",
@@ -80,6 +91,13 @@ ALIASES: dict[str, str] = {
     "musllinux-ppc64le": "musl-ppc64le",
     "musllinux-s390x": "musl-s390x",
     "musllinux-riscv64": "musl-riscv64",
+    "ios": "ios-arm64",
+    "iphoneos": "ios-arm64",
+    "ios-simulator": "ios-simulator-arm64",
+    "iphonesimulator": "ios-simulator-arm64",
+    "android": "android-arm64",
+    "android-arm64-v8a": "android-arm64",
+    "android-aarch64": "android-arm64",
     "pyodide-wasm32": "pyodide",
     "emscripten": "pyodide",
     "wasm": "pyodide",
@@ -93,13 +111,27 @@ _MARKER_OS = {
     "macos": ("darwin", "Darwin", "posix"),
     "windows": ("win32", "Windows", "nt"),
     "pyodide": ("emscripten", "Emscripten", "posix"),
+    "ios": ("ios", "iOS", "posix"),
+    "android": ("android", "Android", "posix"),
 }
-_MARKER_MACHINE = {"win_amd64": "AMD64", "win_arm64": "ARM64"}
+# Markers are evaluated where dependencies are installed: Briefcase runs pip in a cross venv that
+# reports the arch ("arm64") for iOS devices, and Chaquopy reports aarch64/x86_64 on Android.
+_MARKER_MACHINE = {
+    "win_amd64": "AMD64",
+    "win_arm64": "ARM64",
+    "arm64_iphoneos": "arm64",
+    "arm64_iphonesimulator": "arm64",
+    "x86_64_iphonesimulator": "x86_64",
+    "arm64_v8a": "aarch64",
+}
 
 DEFAULT_PLATFORMS = ["linux-x86_64", "linux-aarch64", "macos-arm64", "win-amd64"]
 DEFAULT_GLIBC = "2.36"
 DEFAULT_MUSL = "1.2"
 DEFAULT_MACOS = "14.0"
+DEFAULT_IOS = "13.0"  # CPython's own minimum (PEP 730), and Briefcase's default deployment target
+DEFAULT_ANDROID_API = "24"  # CPython 3.14's minimum, and Briefcase's and Chaquopy's default minSdk
+MOBILE_PYTHONS = (3, 13)  # the first CPython with official iOS and Android support
 
 # Legacy manylinux aliases (PEP 513/571/599) and the glibc minor they map to.
 _LEGACY_MANYLINUX = {17: "manylinux2014", 12: "manylinux2010", 5: "manylinux1"}
@@ -149,13 +181,46 @@ def parse_python(spec: str) -> tuple[int, int, bool]:
     return int(m.group(1)), int(m.group(2)), bool(m.group(3))
 
 
+_VERSION_EXAMPLES = {"glibc": "2.36", "musl": "1.2", "macOS": "14.0", "iOS": "13.0"}
+
+
 def parse_version_pair(spec: str, what: str) -> tuple[int, int]:
+    example = _VERSION_EXAMPLES.get(what, "2.36")
     try:
         parts = spec.strip().split(".")
         major, minor = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0  # "15" means 15.0
     except ValueError:
-        raise TargetError(f"can't parse {what} version {spec!r} (expected e.g. 2.36)") from None
+        raise TargetError(f"can't parse {what} version {spec!r} (expected e.g. {example})") from None
+    # Tags are generated for every version below this one, so absurd values would never finish.
+    if not (0 <= major <= 99 and 0 <= minor <= 99):
+        raise TargetError(f"{what} version {spec!r} is out of range (expected e.g. {example})")
     return major, minor
+
+
+IOS_FLOOR = (12, 0)  # the oldest iOS packaging (and so pip) considers
+ANDROID_FLOOR = 16  # the oldest API level packaging (and so pip) considers
+
+
+ANDROID_CEILING = 99  # far above any real API level (36 in 2025); pip tries every level down to 16
+
+
+def parse_api_level(spec: str | int) -> int:
+    try:
+        level = int(str(spec).strip())
+    except ValueError:
+        raise TargetError(f"can't parse Android API level {spec!r} (expected e.g. 24)") from None
+    if level < ANDROID_FLOOR:
+        raise TargetError(f"Android API level {level} is too old ({ANDROID_FLOOR} is the lowest pip knows)")
+    if level > ANDROID_CEILING:
+        raise TargetError(f"Android API level {level} doesn't exist (expected e.g. 24)")
+    return level
+
+
+def parse_ios_version(spec: str) -> tuple[int, int]:
+    version = parse_version_pair(spec, "iOS")
+    if version < IOS_FLOOR:
+        raise TargetError(f"iOS {spec} is too old (12.0 is the lowest pip knows)")
+    return version
 
 
 def manylinux_platforms(arch: str, glibc: tuple[int, int]) -> list[str]:
@@ -183,6 +248,8 @@ class Target:
     glibc: tuple[int, int] = (2, 36)
     musl: tuple[int, int] = (1, 2)
     macos: tuple[int, int] = (14, 0)
+    ios: tuple[int, int] = (13, 0)
+    android_api: int = 24
 
     @property
     def python(self) -> str:
@@ -193,8 +260,8 @@ class Target:
 
     @property
     def builds_sdists(self) -> bool:
-        """Whether an installer can fall back to building an sdist. Pyodide has no compiler."""
-        return PLATFORMS[self.platform][0] != "pyodide"
+        """Whether an installer can fall back to building an sdist (not on Pyodide, iOS or Android)."""
+        return PLATFORMS[self.platform][0] not in WHEEL_ONLY_FAMILIES
 
     def platform_tags(self) -> list[str]:
         family, arch = PLATFORMS[self.platform]
@@ -207,6 +274,10 @@ class Target:
             return musllinux_platforms(arch, self.musl)
         if family == "macos":
             return list(tags.mac_platforms(self.macos, arch))
+        if family == "ios":
+            return list(tags.ios_platforms(self.ios, arch))
+        if family == "android":
+            return list(tags.android_platforms(self.android_api, arch))
         return [arch]
 
     @cached_property
@@ -251,6 +322,8 @@ def build_targets(
     glibc: str = DEFAULT_GLIBC,
     musl: str = DEFAULT_MUSL,
     macos: str = DEFAULT_MACOS,
+    ios: str = DEFAULT_IOS,
+    android_api: str | int = DEFAULT_ANDROID_API,
 ) -> list[Target]:
     plats: list[str] = []
     for item in platforms:
@@ -261,19 +334,27 @@ def build_targets(
                 plats.extend(NATIVE_PLATFORMS)
             elif name.strip().lower() == "everything":
                 plats.extend(EVERY_NATIVE_PLATFORM)
+            elif name.strip().lower() == "mobile":
+                plats.extend(MOBILE_PLATFORMS)
             else:
                 plats.append(resolve_platform(name))
     plats = list(dict.fromkeys(plats)) or list(DEFAULT_PLATFORMS)
 
     pys = list(dict.fromkeys(parse_python(p) for item in pythons for p in item.split(",") if p.strip()))
-    opts = dict(
+    versions = dict(
         glibc=parse_version_pair(glibc, "glibc"),
         musl=parse_version_pair(musl, "musl"),
         macos=parse_version_pair(macos, "macOS"),
+        ios=parse_ios_version(ios),
     )
+    api_level = parse_api_level(android_api)
+    if mobile := [p for p in plats if p in MOBILE_PLATFORMS]:
+        for ma, mi, _ in pys:
+            if (ma, mi) < MOBILE_PYTHONS:
+                raise TargetError(f"{mobile[0]}: PEP 730/738 iOS and Android targets need Python 3.13+ (not {ma}.{mi})")
     if "pyodide" in plats:
         for ma, mi, ft in pys:
             if ft or (ma, mi) not in PYODIDE_PLATFORMS:
                 known = ", ".join(f"{a}.{b}" for a, b in PYODIDE_PLATFORMS)
                 raise TargetError(f"no Pyodide build for Python {ma}.{mi}{'t' * ft} (known: {known})")
-    return [Target(ma, mi, ft, plat, **opts) for (ma, mi, ft) in pys for plat in plats]
+    return [Target(ma, mi, ft, plat, android_api=api_level, **versions) for (ma, mi, ft) in pys for plat in plats]

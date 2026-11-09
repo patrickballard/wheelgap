@@ -16,10 +16,12 @@ from .check import Row, Status, check, explain, has_sdist
 from .dockerfile import DockerfileError, read_dockerfile
 from .pyodide import PyodideLock, PyodideLockError, apply_bundled, check_targets, load_pyodide_lock
 from .pypi import check_index_url, fill_all
-from .sources import SourceError, load_inputs
+from .sources import Package, SourceError, load_inputs
 from .targets import (
     ALIASES,
+    DEFAULT_ANDROID_API,
     DEFAULT_GLIBC,
+    DEFAULT_IOS,
     DEFAULT_MACOS,
     DEFAULT_MUSL,
     DEFAULT_PLATFORMS,
@@ -29,6 +31,8 @@ from .targets import (
     Target,
     TargetError,
     build_targets,
+    parse_api_level,
+    parse_ios_version,
     parse_version_pair,
     resolve_platform,
 )
@@ -91,12 +95,18 @@ def make_parser() -> argparse.ArgumentParser:
         metavar="PLATFORM",
         help=(
             "target platform (repeatable; 'all' for the 8 common ones, 'everything' adds armv7l, ppc64le, "
-            f"s390x and riscv64 Linux; default: {','.join(DEFAULT_PLATFORMS)})"
+            f"s390x and riscv64 Linux, 'mobile' is iOS and Android; default: {','.join(DEFAULT_PLATFORMS)})"
         ),
     )
     p.add_argument("--glibc", metavar="X.Y", help=f"glibc version for linux-* targets (default: {DEFAULT_GLIBC})")
     p.add_argument("--musl", metavar="X.Y", help=f"musl version for musl-* targets (default: {DEFAULT_MUSL})")
     p.add_argument("--macos", metavar="X.Y", help=f"minimum macOS for macos-* targets (default: {DEFAULT_MACOS})")
+    p.add_argument("--ios", metavar="X.Y", help=f"minimum iOS for ios-* targets (default: {DEFAULT_IOS})")
+    p.add_argument(
+        "--android-api",
+        metavar="N",
+        help=f"minimum Android API level for android-* targets (default: {DEFAULT_ANDROID_API})",
+    )
     p.add_argument(
         "--dockerfile",
         metavar="PATH",
@@ -120,6 +130,11 @@ def make_parser() -> argparse.ArgumentParser:
         help="print only the gap summary and affected package names (--no-quiet overrides quiet = true)",
     )
     p.add_argument("--json", action="store_true", help="print JSON instead of a table")
+    p.add_argument(
+        "--markdown",
+        action="store_true",
+        help="print a Markdown report (e.g. for $GITHUB_STEP_SUMMARY) instead of a table",
+    )
     p.add_argument("--exit-zero", action="store_true", help="exit 0 even when gaps are found")
     p.add_argument(
         "--fail-on",
@@ -134,7 +149,7 @@ def make_parser() -> argparse.ArgumentParser:
 
 FAIL_ON = ("source", "missing")
 LIST_KEYS = ("python", "targets")
-STR_KEYS = ("glibc", "musl", "macos", "fail-on", "pyodide-lock")
+STR_KEYS = ("glibc", "musl", "macos", "ios", "android-api", "fail-on", "pyodide-lock")
 
 
 def project_dir(inputs: list[str]) -> Path:
@@ -188,8 +203,18 @@ def load_config(path: Path) -> dict:
             if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
                 raise SourceError(f"{path}: [tool.wheelgap] {key} must be a list of strings")
         elif key in STR_KEYS:
+            if key == "android-api" and isinstance(value, int) and not isinstance(value, bool):
+                value = str(value)  # an API level is naturally written as a number
             if not isinstance(value, str):
-                raise SourceError(f'{path}: [tool.wheelgap] {key} must be a string like "2.31"')
+                example = {
+                    "android-api": 'an integer or a string like "24"',
+                    "ios": 'a string like "13.0"',
+                    "musl": 'a string like "1.2"',
+                    "macos": 'a string like "14.0"',
+                    "fail-on": 'a string like "missing"',
+                    "pyodide-lock": "a path or URL string",
+                }.get(key, 'a string like "2.31"')
+                raise SourceError(f"{path}: [tool.wheelgap] {key} must be {example}")
             if key == "fail-on" and value not in FAIL_ON:
                 raise SourceError(f"{path}: [tool.wheelgap] fail-on must be one of: {', '.join(FAIL_ON)}")
         elif key == "quiet":
@@ -369,8 +394,13 @@ def print_target_list(args: argparse.Namespace, config: dict) -> None:
     for family, (label, version) in versions.items():
         major, minor = parse_version_pair(version, label)
         limits[family] = f", {label} <= {major}.{minor}"
+    major, minor = parse_ios_version(args.ios or config.get("ios", DEFAULT_IOS))
+    limits["ios"] = f", iOS <= {major}.{minor}"
     pythons = ", ".join(f"{a}.{b}" for a, b in PYODIDE_PLATFORMS)
     limits["pyodide"] = f", Python {pythons} (not in -t all)"
+    limits["ios"] += " (wheels only; -t mobile, not in -t all)"
+    api = parse_api_level(args.android_api or config.get("android-api", DEFAULT_ANDROID_API))
+    limits["android"] = f", API level <= {api} (wheels only; -t mobile, not in -t all)"
 
     rows = [
         (name, aliases[name], f"{family} {arch}{limits.get(family, '')}{' (not in -t all)' * (arch in EXTRA_ARCHES)}")
@@ -416,6 +446,83 @@ def gap_summary(gaps: list[Row], total: int, style: Style) -> str:
     return f"{style.bold(f'{len(gaps)} of {total} packages')} {verb} gaps: " + ", ".join(parts) + "."
 
 
+_MD_SPECIAL = re.compile(r"([\\`*_\[\]<>#|~&])")
+
+
+def _md(text: str) -> str:
+    """Escape text so Markdown shows it literally (paths like ./__internal__/ stay as written)."""
+    return _MD_SPECIAL.sub(r"\\\1", text)
+
+
+def _code(text: str) -> str:
+    """A Markdown code span showing text exactly (paths and URLs stay readable and unlinked)."""
+    if not text:
+        return '`""`'  # `` isn't a code span, and would pair up with the backticks after it
+    fence = "`" * (max((len(run) for run in re.findall(r"`+", text)), default=0) + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"  # only used outside tables, so | needs no escaping
+
+
+def render_markdown(
+    rows: list[Row],
+    targets: list[Target],
+    source_labels: list[str],
+    skipped: list[Package],
+    args: argparse.Namespace,
+    pyodide_lock: PyodideLock | None,
+    source_allowed: bool = False,
+) -> list[str]:
+    """The same report as the text output, as GitHub-flavoured Markdown (for a job summary or a PR comment)."""
+    plain = Style(False)
+    gaps = [r for r in rows if not r.ok]
+    n_t = len(targets)
+    if gaps:
+        noun = "package" if len(rows) == 1 else "packages"
+        out = [f"### wheelgap: {len(gaps)} of {len(rows)} {noun} {'has' if len(gaps) == 1 else 'have'} gaps", ""]
+    else:
+        out = [
+            f"### wheelgap: every package has a wheel for {'all ' if n_t > 1 else ''}{n_t} target{'s' * (n_t > 1)}",
+            "",
+        ]
+    pys = ", ".join(dict.fromkeys(t.python for t in targets))
+    n_pkgs = f"{len(rows)} package{'s' * (len(rows) != 1)}"
+    out += [f"wheelgap {__version__} · {' + '.join(map(_code, source_labels))} · {n_pkgs} · Python {pys}", ""]
+
+    shown = rows if args.all else gaps
+    if shown:
+        multi_py = len({t.python for t in targets}) > 1
+        headers = ["package", "version"] + [t.label(multi_py) for t in targets]
+        out.append("| " + " | ".join(_md(h) for h in headers) + " |")
+        out.append("| " + " | ".join("---" for _ in headers) + " |")
+        for r in shown:
+            cells = [r.package.name, r.package.version or "?"] + [CELL[r.results[t]][0] for t in targets]
+            out.append("| " + " | ".join(_md(c) for c in cells) + " |")
+        out.append("")
+        hidden = len(rows) - len(shown)
+        if hidden:
+            noun = "package" if hidden == 1 else "packages"
+            out += [f"{hidden} {noun} with wheels for every target hidden (`--all` to show).", ""]
+
+    if gaps:
+        out += [gap_summary(gaps, len(rows), plain), ""]
+        if source_allowed:
+            out += ["Source builds are allowed (fail-on missing), so this run passes.", ""]
+    bundled = [r for r in rows if Status.BUNDLED in r.results.values()]
+    if bundled and pyodide_lock:
+        out += [_md(bundled_line(bundled, pyodide_lock)), ""]
+    if skipped:
+        names = ", ".join(f"{_code(p.name)} ({p.skip})" for p in skipped)
+        out += [f"Skipped {len(skipped)} non-index package{'s' * (len(skipped) != 1)}: {names}", ""]
+    for r in rows:
+        if r.package.error:
+            out += [f"Could not check {_md(r.package.name)}: {_code(r.package.error)}", ""]
+    if args.explain and gaps:
+        # Fenced, so wheel filenames and reasons need no escaping.
+        lines = render_explain(gaps, targets, plain)
+        out += ["<details><summary>Why (rejected wheels)</summary>", "", "```", *lines, "```", "", "</details>", ""]
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         # Don't crash printing ✓ to a non-UTF-8 pipe (e.g. Windows cp1252).
@@ -430,6 +537,10 @@ def main(argv: list[str] | None = None) -> int:
                 reconfigure(errors="replace")
     parser = make_parser()
     args = parser.parse_args(argv)
+    if args.json and args.markdown:
+        parser.error("--json and --markdown can't be used together")
+    if args.list_targets and args.markdown:
+        parser.error("--list-targets has no Markdown form (use --json)")
     try:
         if args.list_targets:
             pyproject = find_pyproject(args.inputs)
@@ -438,8 +549,8 @@ def main(argv: list[str] | None = None) -> int:
         pyproject = find_pyproject(args.inputs)
         config = load_config(pyproject) if pyproject else {}
         quiet = args.quiet if args.quiet is not None else config.get("quiet", False)
-        # Quiet only changes the text output, so it can't clash with --explain when printing JSON.
-        if quiet and args.explain and not args.json:
+        # Quiet only changes the text output, so it can't clash with --explain when printing JSON or Markdown.
+        if quiet and args.explain and not (args.json or args.markdown):
             parser.error("--explain cannot be used with quiet mode (--quiet or quiet = true; --no-quiet turns it off)")
         if args.dockerfile:
             # The image beats pyproject.toml; flags still win.
@@ -454,6 +565,8 @@ def main(argv: list[str] | None = None) -> int:
             args.glibc or config.get("glibc", DEFAULT_GLIBC),
             args.musl or config.get("musl", DEFAULT_MUSL),
             args.macos or config.get("macos", DEFAULT_MACOS),
+            args.ios or config.get("ios", DEFAULT_IOS),
+            args.android_api or config.get("android-api", DEFAULT_ANDROID_API),
         )
         check_index_url()
         sources = load_inputs(args.inputs or ["."])
@@ -491,6 +604,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.json:
         print(report_json(rows, targets, source_labels, skipped, args.explain, pyodide_lock))
+        return code
+
+    if args.markdown:
+        source_allowed = bool(gaps) and not failing  # judged on --fail-on alone, not --exit-zero
+        print("\n".join(render_markdown(rows, targets, source_labels, skipped, args, pyodide_lock, source_allowed)))
         return code
 
     style = Style(use_color(args.color))

@@ -12,6 +12,10 @@ inputs:
       Pass -p explicitly: otherwise the runner's own Python version is assumed.
     required: false
     default: ""
+  summary:
+    description: Also write the gap table to the job summary page (true or false; skipped when args include --json).
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -20,7 +24,19 @@ runs:
       shell: bash
       env:
         WHEELGAP_ARGS: ${{ inputs.args }}
+        WHEELGAP_SUMMARY: ${{ inputs.summary }}
         FORCE_COLOR: "1"
-      # WHEELGAP_ARGS is deliberately unquoted so it splits into separate arguments (and globs like
-      # requirements/*.txt expand). It arrives through an env var, so it can't inject commands.
-      run: pipx run --spec "$GITHUB_ACTION_PATH" wheelgap $WHEELGAP_ARGS
+      # WHEELGAP_ARGS is deliberately unquoted so it splits into separate arguments.
+      run: |
+        set +e
+        pipx run --spec "$GITHUB_ACTION_PATH" wheelgap $WHEELGAP_ARGS
+        code=$?
+        # The summary is a second, never-failing run; the step's result is the real run's exit code.
+        # Exit code 2 means bad input, which the log above already explains. The extra flags go first
+        # so a `--` in args can't turn them into package names, and only a real Markdown report is
+        # appended (not help, --version or --list-targets output).
+        if [ "$WHEELGAP_SUMMARY" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ] && [ "$code" -le 1 ]; then
+          report=$(pipx run --spec "$GITHUB_ACTION_PATH" wheelgap --markdown --no-quiet --exit-zero $WHEELGAP_ARGS 2>/dev/null) \
+            && [[ "$report" == "### wheelgap"* ]] && printf '%s\n' "$report" >> "$GITHUB_STEP_SUMMARY"
+        fi
+        exit "$code"

@@ -238,3 +238,66 @@ def test_plain_linux_arch_wheels_count_on_glibc_only():
     assert not accepts(t("linux-aarch64"), "grpcio-1.85.1-cp313-cp313-linux_armv7l.whl")
     # They're glibc builds, so they don't count on Alpine (pip would take them, then fail to load them).
     assert not accepts(t("musl-armv7l"), "grpcio-1.85.1-cp313-cp313-linux_armv7l.whl")
+
+
+def test_ios_targets():
+    device, sim = t("ios-arm64"), t("ios-simulator-arm64")
+    assert accepts(device, "pillow-12.0.0-cp313-cp313-ios_13_0_arm64_iphoneos.whl")
+    assert not accepts(device, "pillow-12.0.0-cp313-cp313-ios_13_0_arm64_iphonesimulator.whl")
+    assert accepts(sim, "pillow-12.0.0-cp313-cp313-ios_13_0_arm64_iphonesimulator.whl")
+    assert accepts(device, "x-1-cp313-cp313-ios_12_0_arm64_iphoneos.whl")  # older minimums are fine
+    assert not accepts(device, "x-1-cp313-cp313-ios_15_0_arm64_iphoneos.whl")  # above the default 13.0
+    assert accepts(t("ios-arm64", ios=(15, 0)), "x-1-cp313-cp313-ios_15_0_arm64_iphoneos.whl")
+    assert not accepts(device, "x-1-cp313-cp313-macosx_11_0_arm64.whl")
+    assert accepts(device, "six-1.17.0-py2.py3-none-any.whl")
+    assert device.marker_env["sys_platform"] == "ios" and device.marker_env["platform_system"] == "iOS"
+    assert sim.marker_env["platform_machine"] == "arm64"
+    assert device.marker_env["platform_machine"] == "arm64"  # what pip sees in Briefcase's cross venv
+
+
+def test_android_targets():
+    arm = t("android-arm64")
+    assert accepts(arm, "x-1-cp313-cp313-android_21_arm64_v8a.whl")
+    assert accepts(arm, "x-1-cp313-cp313-android_24_arm64_v8a.whl")
+    assert not accepts(arm, "x-1-cp313-cp313-android_26_arm64_v8a.whl")  # above the default API level 24
+    assert accepts(t("android-arm64", android_api=26), "x-1-cp313-cp313-android_26_arm64_v8a.whl")
+    assert not accepts(arm, "x-1-cp313-cp313-android_21_x86_64.whl")
+    assert not accepts(arm, "x-1-cp313-cp313-manylinux_2_17_aarch64.whl")
+    assert arm.marker_env["sys_platform"] == "android" and arm.marker_env["platform_machine"] == "aarch64"
+
+
+def test_mobile_is_wheel_only_and_named_explicitly():
+    assert not t("ios-arm64").builds_sdists and not t("android-x86_64").builds_sdists
+    assert [x.platform for x in build_targets(["3.13"], ["mobile"])] == [
+        "ios-arm64",
+        "ios-simulator-arm64",
+        "ios-simulator-x86_64",
+        "android-arm64",
+        "android-x86_64",
+    ]
+    assert not any(p.startswith(("ios", "android")) for p in EVERY_NATIVE_PLATFORM)
+    assert [x.platform for x in build_targets(["3.13"], ["ios,android,ios-simulator"])] == [
+        "ios-arm64",
+        "android-arm64",
+        "ios-simulator-arm64",
+    ]
+
+
+def test_mobile_versions_and_errors():
+    (x,) = build_targets(["3.14"], ["android"], android_api="28", ios="17.2")
+    assert x.android_api == 28 and x.ios == (17, 2)
+    with pytest.raises(TargetError, match="need Python 3.13"):
+        build_targets(["3.12"], ["ios"])
+    with pytest.raises(TargetError, match="can't parse Android API level"):
+        build_targets(["3.13"], ["android"], android_api="Q")
+    with pytest.raises(TargetError, match="too old"):
+        build_targets(["3.13"], ["android"], android_api="15")
+    with pytest.raises(TargetError, match="doesn't exist"):
+        build_targets(["3.13"], ["android"], android_api="5000000")
+    for flag in ("ios", "macos", "glibc"):
+        with pytest.raises(TargetError, match="out of range"):
+            build_targets(["3.13"], ["ios"], **{flag: "13.3000000"})
+    with pytest.raises(TargetError, match=r"can't parse iOS version 'abc' \(expected e.g. 13.0\)"):
+        build_targets(["3.13"], ["ios"], ios="abc")
+    with pytest.raises(TargetError, match="iOS 11.0 is too old"):
+        build_targets(["3.13"], ["ios"], ios="11.0")

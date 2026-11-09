@@ -267,6 +267,30 @@ def test_list_targets_respects_compatibility_overrides(capsys):
     assert "macOS <= 13.0" in by_name["macos-x86_64"]
 
 
+def test_mobile_flags_and_config(capsys, fake_pypi, tmp_path, monkeypatch):
+    code, out, _ = run(capsys, "--list-targets", "--ios", "16.4", "--android-api", "30", "--json")
+    by_name = {row["name"]: row["accepts"] for row in json.loads(out)}
+    assert by_name["ios-arm64"] == "ios arm64_iphoneos, iOS <= 16.4 (wheels only; -t mobile, not in -t all)"
+    assert by_name["android-x86_64"] == "android x86_64, API level <= 30 (wheels only; -t mobile, not in -t all)"
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pyproject.toml").write_text('[tool.wheelgap]\nios = "15.0"\nandroid-api = 28\n')  # an int is fine
+    by_name = {row["name"]: row["accepts"] for row in json.loads(run(capsys, "--list-targets", "--json")[1])}
+    assert "iOS <= 15.0" in by_name["ios-arm64"] and "API level <= 28" in by_name["android-arm64"]
+    code, out, _ = run(capsys, "nowheels==0.9", "purewheel==3.1", "-p", "3.13", "-t", "mobile", "--json")
+    data = json.loads(out)
+    assert code == 1
+    statuses = {p["name"]: set(p["results"].values()) for p in data["packages"]}
+    assert statuses == {"nowheels": {"missing"}, "purewheel": {"wheel"}}
+    code, _, err = run(capsys, "--list-targets", "--ios", "11.0")
+    assert code == 2 and "iOS 11.0 is too old" in err
+    code, _, err = run(capsys, "six", "-p", "3.12", "-t", "android")
+    assert code == 2 and "need Python 3.13" in err
+    (tmp_path / "pyproject.toml").write_text("[tool.wheelgap]\nandroid-api = true\n")
+    code, _, err = run(capsys, "--list-targets")
+    assert code == 2 and 'android-api must be an integer or a string like "24"' in err
+
+
 def test_list_targets_rejects_invalid_compatibility_version(capsys):
     code, out, err = run(capsys, "--list-targets", "--glibc", "bad")
     assert code == 2 and not out
@@ -421,3 +445,97 @@ def test_output_is_utf8_on_a_cp1252_pipe(monkeypatch, capsys):
     assert main(["--list-targets"]) == 0
     stream.flush()
     assert stream.encoding.lower().replace("-", "") == "utf8"
+
+
+def test_markdown_report(capsys, fake_pypi, monkeypatch):
+    monkeypatch.setenv("FORCE_COLOR", "1")  # as in the Action: Markdown must still have no colour codes
+    code, out, err = run(
+        capsys,
+        "fastlib==2.0.0",
+        "nowheels==0.9",
+        "purewheel==3.1",
+        "-p",
+        "3.13",
+        "-t",
+        "linux-x86_64,win-amd64",
+        "--markdown",
+    )
+    assert code == 1 and not err
+    lines = out.splitlines()
+    assert lines[0] == "### wheelgap: 2 of 3 packages have gaps"
+    assert "| package | version | linux-x86\\_64 | win-amd64 |" in lines
+    assert "| --- | --- | --- | --- |" in lines
+    assert "| fastlib | 2.0.0 | ✓ | ● source |" in lines
+    assert "| nowheels | 0.9 | ● source | ● source |" in lines
+    assert "purewheel" not in out  # hidden like the text table, unless --all
+    assert "2 of 3 packages have gaps: 2 will build from source." in lines
+    assert "\033[" not in out and "<details>" not in out
+
+
+def test_markdown_all_explain_and_quiet(capsys, fake_pypi, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pyproject.toml").write_text("[tool.wheelgap]\nquiet = true\n")
+    code, out, err = run(
+        capsys, "fastlib==2.0.0", "purewheel==3.1", "-p", "3.13", "-t", "win-amd64", "--markdown", "--all", "--explain"
+    )
+    assert code == 1 and not err  # quiet = true doesn't clash with --explain, as with --json
+    assert "| purewheel | 3.1 | ✓ |" in out.splitlines()
+    assert "<details><summary>Why (rejected wheels)</summary>" in out
+    assert "fastlib-2.0.0-cp313-cp313-manylinux_2_17_x86_64.whl" in out
+
+
+def test_markdown_clean_run(capsys, fake_pypi):
+    code, out, _ = run(
+        capsys, "purewheel==3.1", "-p", "3.13", "-t", "linux-x86_64,win-amd64", "--markdown", "--exit-zero"
+    )
+    assert code == 0
+    assert out.splitlines()[0] == "### wheelgap: every package has a wheel for all 2 targets"
+    assert "|" not in out
+
+
+def test_markdown_and_json_conflict(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["six", "--json", "--markdown"])
+    assert exc.value.code == 2
+    assert "--json and --markdown" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        main(["--list-targets", "--json", "--markdown"])
+    assert "--json and --markdown" in capsys.readouterr().err
+
+
+def test_markdown_escapes_and_fail_on_missing(capsys, fake_pypi, tmp_path):
+    req = tmp_path / "req_[a]#b.txt"  # characters every OS allows in a filename
+    req.write_text("nowheels==0.9\nhttps://files.example.com/my_pkg-1.0.tar.gz\n")
+    code, out, _ = run(capsys, str(req), "-p", "3.13", "-t", "win-amd64", "--markdown", "--fail-on", "missing")
+    assert code == 0
+    assert "`req_[a]#b.txt`" in out  # paths and URLs go in code spans, shown exactly and never linked
+    assert "`https://files.example.com/my_pkg-1.0.tar.gz` (url)" in out
+    assert "Source builds are allowed (fail-on missing), so this run passes." in out
+    # The Action's summary run adds --exit-zero; the note depends on --fail-on, not on that.
+    code, out2, _ = run(capsys, str(req), "-p", "3.13", "-t", "win-amd64", "--markdown", "--exit-zero")
+    assert "Source builds are allowed" not in out2
+    _, out3, _ = run(
+        capsys, str(req), "-p", "3.13", "-t", "win-amd64", "--markdown", "--fail-on", "missing", "--exit-zero"
+    )
+    assert "Source builds are allowed" in out3
+
+
+def test_markdown_helpers():
+    from wheelgap.cli import _code, _md
+
+    assert _md("./vendor/__x__/ a|b R&amp;D") == "./vendor/\\_\\_x\\_\\_/ a\\|b R\\&amp;D"
+    assert _code("a`b") == "``a`b``"
+    assert _code("`x`") == "`` `x` ``"
+    assert _code("a|b") == "`a|b`"
+    assert _code("") == '`""`'
+
+
+def test_markdown_lookup_errors_and_empty_names(capsys, fake_pypi, tmp_path):
+    req = tmp_path / "requirements.txt"
+    req.write_text("nosuchpkg==1.0\n-e git+https://x.example/r.git#egg=\n")
+    code, out, _ = run(capsys, str(req), "-p", "3.13", "-t", "win-amd64", "--markdown")
+    lines = out.splitlines()
+    assert any(ln.startswith("Could not check nosuchpkg: `") for ln in lines)
+    assert any(
+        ln.startswith('Skipped 1 non-index package: `""`') or '`""`' in ln for ln in lines if ln.startswith("Skipped")
+    )
