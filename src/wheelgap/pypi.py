@@ -10,7 +10,8 @@ import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import quote
+from typing import IO
+from urllib.parse import quote, urlparse
 
 from packaging.specifiers import SpecifierSet
 from packaging.version import InvalidVersion, Version
@@ -43,6 +44,31 @@ def _retry_after(e: urllib.error.HTTPError) -> float | None:
     return value if value is not None and math.isfinite(value) and value >= 0 else None
 
 
+class RedirectRefused(urllib.error.URLError):
+    """An https:// request was redirected to a URL that isn't https://."""
+
+
+class _HTTPSRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow redirects that downgrade https:// to plain http:// (or another scheme)."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: http.client.HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        if urlparse(req.full_url).scheme == "https" and urlparse(newurl).scheme != "https":
+            fp.close()
+            raise RedirectRefused(f"refused redirect from {req.full_url} to {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_HTTPSRedirectHandler)
+
+
 def fetch_json(url: str, timeout: float = 20.0, attempts: int = 4) -> dict:
     """GET a JSON document, retrying only what can succeed later: 429, 5xx and dropped connections."""
     req = urllib.request.Request(url, headers={"User-Agent": f"wheelgap/{__version__}", "Accept": "application/json"})
@@ -50,13 +76,15 @@ def fetch_json(url: str, timeout: float = 20.0, attempts: int = 4) -> dict:
     for attempt in range(attempts):
         delay = 0.5 * 2**attempt
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with _OPENER.open(req, timeout=timeout) as resp:
                 return json.load(resp)
         except urllib.error.HTTPError as e:
             if e.code != 429 and e.code < 500:
                 raise  # 404, 403, 410...: asking again won't help
             last = e
             delay = _retry_after(e) or delay
+        except RedirectRefused:
+            raise  # asking again gets the same redirect
         except (urllib.error.URLError, TimeoutError, http.client.HTTPException, ConnectionError) as e:
             last = e  # includes connection resets and truncated responses
         if attempt + 1 < attempts:

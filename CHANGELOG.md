@@ -3,6 +3,7 @@
 ## Unreleased
 
 - `linux-aarch64`, `linux-armv7l`, `linux-ppc64le`, `linux-s390x` and `linux-riscv64` no longer accept `manylinux` wheels older than glibc 2.17 (e.g. `manylinux_2_12_aarch64`), matching pip: those arches had no manylinux before manylinux2014. (#92, thanks [@shounakjoshi88-a11y](https://github.com/shounakjoshi88-a11y))
+- An `https://` lookup (PyPI or `--pyodide-lock`) no longer follows a redirect to plain `http://`; it fails with an error naming both URLs. (#95, thanks [@Mr45401](https://github.com/Mr45401))
 
 ## 0.6.1 (2026-11-09)
 
