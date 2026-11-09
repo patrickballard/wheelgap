@@ -79,3 +79,13 @@ def test_json_without_explain_has_no_rejected(capsys, fixtures):
     main([str(fixtures / "armgap"), "-p", "3.13", "-t", "musl-aarch64", "--json"])
     data = json.loads(capsys.readouterr().out)
     assert all("rejected" not in p for p in data["packages"])
+
+
+def test_explain_pyodide(capsys, fake_pypi):
+    main(["nowheels==0.9", "fastlib==2.0.0", "-p", "3.13", "-t", "pyodide", "--explain"])
+    out = capsys.readouterr().out
+    assert "nowheels 0.9 on pyodide: ✗ missing" in out
+    assert "pyodide can't build packages from source" in out
+    assert rejection("x-1-cp314-cp314-pyemscripten_2026_0_wasm32.whl", target(plat="pyodide")) == (
+        "pyemscripten_2026_0_wasm32 is for a different Pyodide ABI than Python 3.13"
+    )

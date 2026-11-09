@@ -12,7 +12,7 @@ import tomllib
 from pathlib import Path
 
 from . import __version__
-from .check import Row, Status, check, explain
+from .check import Row, Status, check, explain, has_sdist
 from .dockerfile import DockerfileError, read_dockerfile
 from .pypi import fill_all
 from .sources import SourceError, load_inputs
@@ -251,6 +251,8 @@ def render_explain(rows: list[Row], targets: list[Target], style: Style) -> list
                 out.append(f"  {f.ljust(width)}  {style.dim(reason)}")
             if len(rejected) > EXPLAIN_LIMIT:
                 out.append(style.dim(f"  … and {len(rejected) - EXPLAIN_LIMIT} more (--json lists them all)"))
+            if not t.builds_sdists and has_sdist(files):
+                out.append(style.dim(f"  there is an sdist, but {t.platform} can't build packages from source"))
             out.append("")
     return out
 

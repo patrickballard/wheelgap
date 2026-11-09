@@ -18,7 +18,11 @@ PLATFORMS: dict[str, tuple[str, str]] = {
     "macos-x86_64": ("macos", "x86_64"),
     "win-amd64": ("windows", "win_amd64"),
     "win-arm64": ("windows", "win_arm64"),
+    "pyodide": ("pyodide", "wasm32"),
 }
+
+# `-t all` means the native platforms; Pyodide only when asked for by name.
+NATIVE_PLATFORMS = [name for name, (family, _) in PLATFORMS.items() if family != "pyodide"]
 
 ALIASES: dict[str, str] = {
     "linux": "linux-x86_64",
@@ -44,6 +48,10 @@ ALIASES: dict[str, str] = {
     "windows-x86_64": "win-amd64",
     "win-x86_64": "win-amd64",
     "windows-arm64": "win-arm64",
+    "pyodide-wasm32": "pyodide",
+    "emscripten": "pyodide",
+    "wasm": "pyodide",
+    "wasm32": "pyodide",
 }
 
 # family -> (sys_platform, platform_system, os_name); arch -> platform_machine
@@ -52,6 +60,7 @@ _MARKER_OS = {
     "musllinux": ("linux", "Linux", "posix"),
     "macos": ("darwin", "Darwin", "posix"),
     "windows": ("win32", "Windows", "nt"),
+    "pyodide": ("emscripten", "Emscripten", "posix"),
 }
 _MARKER_MACHINE = {"win_amd64": "AMD64", "win_arm64": "ARM64"}
 
@@ -63,6 +72,16 @@ _LEGACY_ARCHES = {
     "manylinux1": {"x86_64", "i686"},
     "manylinux2010": {"x86_64", "i686"},
     "manylinux2014": {"x86_64", "i686", "aarch64", "armv7l", "ppc64", "ppc64le", "s390x"},
+}
+
+# Pyodide wheels are tied to one ABI per Python version and don't work across them
+# (https://pyodide-build.readthedocs.io/en/latest/reference/platform.html). PEP 783 renamed
+# the tag to pyemscripten_*; both spellings of the same ABI are accepted.
+PYODIDE_PLATFORMS: dict[tuple[int, int], list[str]] = {
+    (3, 11): ["emscripten_3_1_32_wasm32"],
+    (3, 12): ["pyodide_2024_0_wasm32", "pyemscripten_2024_0_wasm32"],
+    (3, 13): ["pyodide_2025_0_wasm32", "pyemscripten_2025_0_wasm32"],
+    (3, 14): ["pyemscripten_2026_0_wasm32"],
 }
 
 _PY_RE = re.compile(r"^(?:cp|py)?(\d)\.?(\d{1,2})(t?)$")
@@ -136,8 +155,15 @@ class Target:
     def label(self, with_python: bool) -> str:
         return f"{self.python} {self.platform}" if with_python else self.platform
 
+    @property
+    def builds_sdists(self) -> bool:
+        """Whether an installer can fall back to building an sdist. Pyodide has no compiler."""
+        return PLATFORMS[self.platform][0] != "pyodide"
+
     def platform_tags(self) -> list[str]:
         family, arch = PLATFORMS[self.platform]
+        if family == "pyodide":
+            return list(PYODIDE_PLATFORMS[(self.major, self.minor)])
         if family == "manylinux":
             return manylinux_platforms(arch, self.glibc)
         if family == "musllinux":
@@ -194,7 +220,7 @@ def build_targets(
             if not name.strip():
                 continue
             if name.strip().lower() == "all":
-                plats.extend(PLATFORMS)
+                plats.extend(NATIVE_PLATFORMS)
             else:
                 plats.append(resolve_platform(name))
     plats = list(dict.fromkeys(plats)) or list(DEFAULT_PLATFORMS)
@@ -205,4 +231,9 @@ def build_targets(
         musl=parse_version_pair(musl, "musl"),
         macos=parse_version_pair(macos, "macOS"),
     )
+    if "pyodide" in plats:
+        for ma, mi, ft in pys:
+            if ft or (ma, mi) not in PYODIDE_PLATFORMS:
+                known = ", ".join(f"{a}.{b}" for a, b in PYODIDE_PLATFORMS)
+                raise TargetError(f"no Pyodide build for Python {ma}.{mi}{'t' * ft} (known: {known})")
     return [Target(ma, mi, ft, plat, **opts) for (ma, mi, ft) in pys for plat in plats]

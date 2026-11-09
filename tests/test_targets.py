@@ -3,6 +3,7 @@ from packaging.utils import parse_wheel_filename
 
 from wheelgap.targets import (
     DEFAULT_PLATFORMS,
+    NATIVE_PLATFORMS,
     PLATFORMS,
     Target,
     TargetError,
@@ -121,7 +122,7 @@ def test_build_targets_defaults_and_all():
     ts = build_targets(["3.13"], [])
     assert [x.platform for x in ts] == DEFAULT_PLATFORMS
     ts = build_targets(["3.13,3.14t"], ["all"])
-    assert len(ts) == 2 * len(PLATFORMS)
+    assert len(ts) == 2 * len(NATIVE_PLATFORMS)
     ts = build_targets(["3.13"], ["alpine,linux", "alpine"])
     assert [x.platform for x in ts] == ["musl-x86_64", "linux-x86_64"]
 
@@ -134,3 +135,36 @@ def test_build_targets_accepts_docker_platform_list():
 def test_build_targets_bad_glibc():
     with pytest.raises(TargetError):
         build_targets(["3.13"], [], glibc="new")
+
+
+def test_pyodide_tags_per_python():
+    (t313,) = build_targets(["3.13"], ["pyodide"])
+    assert accepts(t313, "x-1-cp313-cp313-pyodide_2025_0_wasm32.whl")
+    assert accepts(t313, "x-1-cp313-cp313-pyemscripten_2025_0_wasm32.whl")  # PEP 783 spelling of the same ABI
+    assert accepts(t313, "x-1-py3-none-any.whl")
+    assert not accepts(t313, "x-1-cp313-cp313-pyemscripten_2026_0_wasm32.whl")  # ABIs don't mix
+    assert not accepts(t313, "x-1-cp313-cp313-manylinux_2_17_x86_64.whl")
+    (t314,) = build_targets(["3.14"], ["wasm"])
+    assert accepts(t314, "x-1-cp314-cp314-pyemscripten_2026_0_wasm32.whl")
+    assert not accepts(t314, "x-1-cp313-cp313-pyodide_2025_0_wasm32.whl")
+    (t312,) = build_targets(["3.12"], ["emscripten"])
+    assert accepts(t312, "x-1-cp312-cp312-pyodide_2024_0_wasm32.whl")
+
+
+def test_pyodide_marker_env():
+    (t,) = build_targets(["3.13"], ["pyodide"])
+    assert t.marker_env["sys_platform"] == "emscripten"
+    assert t.marker_env["platform_machine"] == "wasm32"
+    assert not t.builds_sdists
+
+
+def test_pyodide_unknown_python_and_free_threading():
+    with pytest.raises(TargetError, match="no Pyodide build for Python 3.10"):
+        build_targets(["3.10"], ["pyodide"])
+    with pytest.raises(TargetError, match="no Pyodide build for Python 3.14t"):
+        build_targets(["3.14t"], ["pyodide"])
+
+
+def test_all_does_not_include_pyodide():
+    assert "pyodide" not in [t.platform for t in build_targets(["3.13"], ["all"])]
+    assert len(build_targets(["3.13"], ["all"])) == 8

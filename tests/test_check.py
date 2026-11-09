@@ -102,3 +102,11 @@ def test_online_refresh_overrides_lockfile(fixtures, fake_pypi):
     fill_all(packages, refresh=True)
     fastlib = next(p for p in packages if p.name == "fastlib")
     assert fastlib.files == ["fastlib-2.0.0-cp313-cp313-manylinux_2_17_x86_64.whl", "fastlib-2.0.0.tar.gz"]
+
+
+def test_pyodide_sdist_only_is_missing():
+    (py,) = build_targets(["3.13"], ["pyodide"])
+    (lin,) = build_targets(["3.13"], ["linux-x86_64"])
+    assert status_for(["a-1.tar.gz"], lin) is Status.SOURCE
+    assert status_for(["a-1.tar.gz"], py) is Status.MISSING  # no compiler in the browser
+    assert status_for(["a-1-cp313-cp313-pyodide_2025_0_wasm32.whl", "a-1.tar.gz"], py) is Status.WHEEL

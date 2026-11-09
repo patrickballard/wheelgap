@@ -66,15 +66,20 @@ def status_for(files: list[str] | None, target: Target, _wheels: list[frozenset[
     wheels = _wheels if _wheels is not None else wheel_tags(files)
     if any(target.accepts(t) for t in wheels):
         return Status.WHEEL
-    return Status.SOURCE if has_sdist(files) else Status.MISSING
+    return Status.SOURCE if has_sdist(files) and target.builds_sdists else Status.MISSING
 
 
 _PLAT_RE = re.compile(r"^(manylinux|musllinux|macosx)_(\d+)_(\d+)_(.+)$")
 _LIBC = {"manylinux": "glibc", "musllinux": "musl", "macosx": "macOS"}
 
 
+_WASM_RE = re.compile(r"^(?:pyodide|pyemscripten|emscripten)_[0-9_]+_wasm32$")
+
+
 def _platform_reason(plat: str, target: Target) -> str:
     family, arch = PLATFORMS[target.platform]
+    if family == "pyodide" and _WASM_RE.match(plat):
+        return f"{plat} is for a different Pyodide ABI than Python {target.python}"
     m = _PLAT_RE.match(plat)
     if m:
         kind, major, minor, wheel_arch = m.group(1), int(m.group(2)), int(m.group(3)), m.group(4)
@@ -118,7 +123,13 @@ def rejection(filename: str, target: Target) -> str | None:
 
 
 _PY_MINOR_RE = re.compile(r"^(?:cp|py)3(\d+)$")
-_OS_PREFIX = {"manylinux": "manylinux", "musllinux": "musllinux", "macos": "macosx", "windows": "win"}
+_OS_PREFIX = {
+    "manylinux": "manylinux",
+    "musllinux": "musllinux",
+    "macos": "macosx",
+    "windows": "win",
+    "pyodide": ("pyodide_", "pyemscripten_", "emscripten_"),
+}
 
 
 def _closeness(filename: str, target: Target) -> tuple[int, int, str]:
