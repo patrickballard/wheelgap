@@ -94,7 +94,7 @@ def make_parser() -> argparse.ArgumentParser:
         metavar="PLATFORM",
         help=(
             "target platform (repeatable; 'all' for the 8 common ones, 'everything' adds armv7l, ppc64le, "
-            f"s390x and riscv64 Linux; default: {','.join(DEFAULT_PLATFORMS)})"
+            f"s390x and riscv64 Linux, 'mobile' is iOS and Android; default: {','.join(DEFAULT_PLATFORMS)})"
         ),
     )
     p.add_argument("--glibc", metavar="X.Y", help=f"glibc version for linux-* targets (default: {DEFAULT_GLIBC})")
@@ -197,8 +197,11 @@ def load_config(path: Path) -> dict:
             if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
                 raise SourceError(f"{path}: [tool.wheelgap] {key} must be a list of strings")
         elif key in STR_KEYS:
+            if key == "android-api" and isinstance(value, int) and not isinstance(value, bool):
+                value = str(value)  # an API level is naturally written as a number
             if not isinstance(value, str):
-                raise SourceError(f'{path}: [tool.wheelgap] {key} must be a string like "2.31"')
+                example = {"android-api": "24", "ios": "13.0", "fail-on": "missing"}.get(key, "2.31")
+                raise SourceError(f'{path}: [tool.wheelgap] {key} must be a string like "{example}"')
             if key == "fail-on" and value not in FAIL_ON:
                 raise SourceError(f"{path}: [tool.wheelgap] fail-on must be one of: {', '.join(FAIL_ON)}")
         elif key == "quiet":

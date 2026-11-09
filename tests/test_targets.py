@@ -252,6 +252,7 @@ def test_ios_targets():
     assert accepts(device, "six-1.17.0-py2.py3-none-any.whl")
     assert device.marker_env["sys_platform"] == "ios" and device.marker_env["platform_system"] == "iOS"
     assert sim.marker_env["platform_machine"] == "arm64"
+    assert device.marker_env["platform_machine"] == "arm64"  # what pip sees in Briefcase's cross venv
 
 
 def test_android_targets():
@@ -285,9 +286,11 @@ def test_mobile_is_wheel_only_and_named_explicitly():
 def test_mobile_versions_and_errors():
     (x,) = build_targets(["3.14"], ["android"], android_api="28", ios="17.2")
     assert x.android_api == 28 and x.ios == (17, 2)
-    with pytest.raises(TargetError, match="from Python 3.13"):
+    with pytest.raises(TargetError, match="need Python 3.13"):
         build_targets(["3.12"], ["ios"])
     with pytest.raises(TargetError, match="can't parse Android API level"):
         build_targets(["3.13"], ["android"], android_api="Q")
     with pytest.raises(TargetError, match="too old"):
         build_targets(["3.13"], ["android"], android_api="15")
+    with pytest.raises(TargetError, match="iOS 11.0 is too old"):
+        build_targets(["3.13"], ["ios"], ios="11.0")

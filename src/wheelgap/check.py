@@ -20,7 +20,7 @@ except ImportError:  # pragma: no cover
     _Value = _Variable = None  # type: ignore[assignment,misc]
 
 from .sources import Edge, Package, Source
-from .targets import PLATFORMS, Target
+from .targets import ANDROID_FLOOR, IOS_FLOOR, PLATFORMS, Target
 
 
 class Status(StrEnum):
@@ -125,9 +125,14 @@ def _platform_reason(plat: str, target: Target) -> str:
     if family == "pyodide" and _WASM_RE.match(plat):
         return f"{plat} is for a different Pyodide ABI than Python {target.python}"
     if family == "ios" and (m := _IOS_RE.match(plat)) and m.group(3) == arch:
+        need = (int(m.group(1)), int(m.group(2)))
+        if need < IOS_FLOOR:
+            return f"{plat} is older than iOS 12.0, the oldest pip accepts"
         have = ".".join(map(str, target.ios))
-        return f"{plat} needs iOS {m.group(1)}.{m.group(2)}, newer than {have} (--ios)"
+        return f"{plat} needs iOS {need[0]}.{need[1]}, newer than {have} (--ios)"
     if family == "android" and (m := _ANDROID_RE.match(plat)) and m.group(2) == arch:
+        if int(m.group(1)) < ANDROID_FLOOR:
+            return f"{plat} is older than API level {ANDROID_FLOOR}, the oldest pip accepts"
         return f"{plat} needs Android API level {m.group(1)}, newer than {target.android_api} (--android-api)"
     m = _PLAT_RE.match(plat)
     if m:

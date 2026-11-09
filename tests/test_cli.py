@@ -274,7 +274,7 @@ def test_mobile_flags_and_config(capsys, fake_pypi, tmp_path, monkeypatch):
     assert by_name["android-x86_64"] == "android x86_64, API level <= 30 (wheels only; -t mobile, not in -t all)"
 
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "pyproject.toml").write_text('[tool.wheelgap]\nios = "15.0"\nandroid-api = "28"\n')
+    (tmp_path / "pyproject.toml").write_text('[tool.wheelgap]\nios = "15.0"\nandroid-api = 28\n')  # an int is fine
     by_name = {row["name"]: row["accepts"] for row in json.loads(run(capsys, "--list-targets", "--json")[1])}
     assert "iOS <= 15.0" in by_name["ios-arm64"] and "API level <= 28" in by_name["android-arm64"]
     code, out, _ = run(capsys, "nowheels==0.9", "purewheel==3.1", "-p", "3.13", "-t", "mobile", "--json")
@@ -283,7 +283,7 @@ def test_mobile_flags_and_config(capsys, fake_pypi, tmp_path, monkeypatch):
     statuses = {p["name"]: set(p["results"].values()) for p in data["packages"]}
     assert statuses == {"nowheels": {"missing"}, "purewheel": {"wheel"}}
     code, _, err = run(capsys, "six", "-p", "3.12", "-t", "android")
-    assert code == 2 and "from Python 3.13" in err
+    assert code == 2 and "need Python 3.13" in err
 
 
 def test_list_targets_rejects_invalid_compatibility_version(capsys):

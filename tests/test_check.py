@@ -278,5 +278,11 @@ def test_mobile_explain_reasons_and_sdists():
     assert rejection("x-1-cp313-cp313-android_26_arm64_v8a.whl", android) == (
         "android_26_arm64_v8a needs Android API level 26, newer than 24 (--android-api)"
     )
+    assert rejection("x-1-cp313-cp313-ios_11_0_arm64_iphoneos.whl", ios) == (
+        "ios_11_0_arm64_iphoneos is older than iOS 12.0, the oldest pip accepts"
+    )
+    assert rejection("x-1-cp313-cp313-android_15_arm64_v8a.whl", android) == (
+        "android_15_arm64_v8a is older than API level 16, the oldest pip accepts"
+    )
     # Mobile installs can't build sdists, so an sdist alone is "can't install", not "from source".
     assert status_for(["x-1.0.tar.gz"], ios) is Status.MISSING

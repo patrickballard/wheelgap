@@ -114,11 +114,12 @@ _MARKER_OS = {
     "ios": ("ios", "iOS", "posix"),
     "android": ("android", "Android", "posix"),
 }
-# On an iPhone, platform.machine() is the device model ("iPhone13,2"); "iPhone" stands in for it.
+# Markers are evaluated where dependencies are installed: Briefcase runs pip in a cross venv that
+# reports the arch ("arm64") for iOS devices, and Chaquopy reports aarch64/x86_64 on Android.
 _MARKER_MACHINE = {
     "win_amd64": "AMD64",
     "win_arm64": "ARM64",
-    "arm64_iphoneos": "iPhone",
+    "arm64_iphoneos": "arm64",
     "arm64_iphonesimulator": "arm64",
     "x86_64_iphonesimulator": "x86_64",
     "arm64_v8a": "aarch64",
@@ -189,13 +190,17 @@ def parse_version_pair(spec: str, what: str) -> tuple[int, int]:
     return major, minor
 
 
+IOS_FLOOR = (12, 0)  # the oldest iOS packaging (and so pip) considers
+ANDROID_FLOOR = 16  # the oldest API level packaging (and so pip) considers
+
+
 def parse_api_level(spec: str | int) -> int:
     try:
         level = int(str(spec).strip())
     except ValueError:
         raise TargetError(f"can't parse Android API level {spec!r} (expected e.g. 24)") from None
-    if level < 16:  # the oldest level packaging (and so pip) considers
-        raise TargetError(f"Android API level {level} is too old (16 is the lowest pip knows)")
+    if level < ANDROID_FLOOR:
+        raise TargetError(f"Android API level {level} is too old ({ANDROID_FLOOR} is the lowest pip knows)")
     return level
 
 
@@ -323,11 +328,13 @@ def build_targets(
         macos=parse_version_pair(macos, "macOS"),
         ios=parse_version_pair(ios, "iOS"),
     )
+    if versions["ios"] < IOS_FLOOR:
+        raise TargetError(f"iOS {ios} is too old (12.0 is the lowest pip knows)")
     api_level = parse_api_level(android_api)
     if mobile := [p for p in plats if p in MOBILE_PLATFORMS]:
         for ma, mi, _ in pys:
             if (ma, mi) < MOBILE_PYTHONS:
-                raise TargetError(f"{mobile[0]}: iOS and Android are supported from Python 3.13 (not {ma}.{mi})")
+                raise TargetError(f"{mobile[0]}: PEP 730/738 iOS and Android targets need Python 3.13+ (not {ma}.{mi})")
     if "pyodide" in plats:
         for ma, mi, ft in pys:
             if ft or (ma, mi) not in PYODIDE_PLATFORMS:
