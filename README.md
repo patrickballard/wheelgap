@@ -111,6 +111,18 @@ If you think wheelgap got a package wrong, that output (or `--json --explain`) i
 
 The job fails when a dependency would build from source on a target you ship, for example when a dependency bump drops ARM wheels.
 
+### With pre-commit
+
+```yaml
+repos:
+  - repo: https://github.com/patrickballard/wheelgap
+    rev: v0.2.0
+    hooks:
+      - id: wheelgap
+```
+
+The hook runs when `uv.lock`, `poetry.lock`, `pylock.toml` or a `requirements*.txt` file changes. Put your targets in `[tool.wheelgap]` in `pyproject.toml` so the hook checks the right platforms. Pass extra options with `args:`, for example `args: [--fail-on, missing]`.
+
 ## How it works
 
 - **Lockfiles are read offline.** `uv.lock`, `pylock.toml` and `poetry.lock` already record every file published for each pinned version. wheelgap parses the wheel filenames' tags with [`packaging`](https://packaging.pypa.io/) and checks them against the exact tag set each target accepts. That is the same logic pip and uv use to pick a wheel.
