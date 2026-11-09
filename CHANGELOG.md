@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- New Linux targets for 32-bit ARM (`linux-armv7l`, e.g. Raspberry Pi OS), `ppc64le`, `s390x` and `riscv64`, each with a `musl-*` twin for Alpine, and their Docker names (`linux/arm/v7` and so on) in `-t` and `--dockerfile`. `-t all` still means the eight common platforms; `-t everything` adds these. (#8)
+
 ## 0.5.0 (2026-11-09)
 
 wheelgap now lives at [github.com/wheelgap/wheelgap](https://github.com/wheelgap/wheelgap). Old links redirect, but update `uses:` and pre-commit `repo:` lines when you next touch them.

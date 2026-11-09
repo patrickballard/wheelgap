@@ -17,6 +17,11 @@ ARCHES = {
     "linux/arm64": "aarch64",
     "linux/arm64/v8": "aarch64",
     "linux/aarch64": "aarch64",
+    "linux/arm/v7": "armv7l",
+    "linux/arm": "armv7l",
+    "linux/ppc64le": "ppc64le",
+    "linux/s390x": "s390x",
+    "linux/riscv64": "riscv64",
 }
 WINDOWS_VARIANTS = ("windowsservercore", "nanoserver")
 IMAGE_NAMES = ("python", "library/python", "docker.io/library/python", "docker.io/python")
