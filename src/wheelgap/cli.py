@@ -114,7 +114,7 @@ def make_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--pyodide-lock",
-        metavar="PATH_OR_URL",
+        metavar="PATH_OR_HTTPS_URL",
         help="a Pyodide release's pyodide-lock.json: packages Pyodide ships itself count as available on -t pyodide",
     )
     p.add_argument(
@@ -443,7 +443,8 @@ def gap_summary(gaps: list[Row], total: int, style: Style) -> str:
     if unknown:
         parts.append(style.dim(f"{unknown} unknown"))
     verb = "has" if len(gaps) == 1 else "have"
-    return f"{style.bold(f'{len(gaps)} of {total} packages')} {verb} gaps: " + ", ".join(parts) + "."
+    noun = "package" if total == 1 else "packages"
+    return f"{style.bold(f'{len(gaps)} of {total} {noun}')} {verb} gaps: " + ", ".join(parts) + "."
 
 
 _MD_SPECIAL = re.compile(r"([\\`*_\[\]<>#|~&])")
@@ -578,7 +579,7 @@ def main(argv: list[str] | None = None) -> int:
         elif (lock_spec := config.get("pyodide-lock")) and any(PLATFORMS[t.platform][0] == "pyodide" for t in targets):
             # A project default: only read (or fetched) on runs that check a pyodide target, so it never
             # affects `wheelgap -t linux` in the same project. A relative path is relative to pyproject.toml.
-            if pyproject and not lock_spec.startswith(("http://", "https://")):
+            if pyproject and not lock_spec.lower().startswith(("http://", "https://")):
                 lock_spec = str(pyproject.parent / lock_spec)
             pyodide_lock = load_pyodide_lock(lock_spec)
             check_targets(pyodide_lock, targets)  # pyodide targets but none for this lock's Python: say so

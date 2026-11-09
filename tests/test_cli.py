@@ -391,6 +391,8 @@ def test_gap_summary_counts_each_package_once():
     assert gap_summary([a, b, c], 3, Style(False)) == (
         "3 of 3 packages have gaps: 1 will build from source, 1 can't install at all, 1 unknown."
     )
+    # singular when only one package in total
+    assert gap_summary([a], 1, Style(False)) == ("1 of 1 package has gaps: 1 can't install at all.")
 
 
 def test_quiet_from_pyproject_allows_json_explain(capsys, fixtures, tmp_path):

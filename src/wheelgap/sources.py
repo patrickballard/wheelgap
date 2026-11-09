@@ -12,7 +12,15 @@ from urllib.parse import unquote, urlparse
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
-LOCKFILES = ("uv.lock", "pylock.toml", "poetry.lock", "pdm.lock", "Pipfile.lock", "requirements.txt")
+LOCKFILES = (
+    "uv.lock",
+    "pylock.toml",
+    "poetry.lock",
+    "pdm.lock",
+    "Pipfile.lock",
+    "requirements.txt",
+    "requirements.lock",
+)
 
 
 class SourceError(ValueError):
@@ -331,8 +339,15 @@ def parse_pipfile_lock(path: Path) -> Source:
     data = json.loads(path.read_text(encoding="utf-8"))
     pkgs: list[Package] = []
     seen: dict[tuple[str, str | None], Package] = {}
-    for section in ("default", "develop"):
-        for name, p in data.get(section, {}).items():
+    for key, val in data.items():
+        if key != "_meta" and not isinstance(val, dict):
+            raise SourceError(f"{path.name}: {key} isn't a package section")
+    sections = [s for s in ("default", "develop") if s in data]
+    sections += [key for key in data if key not in ("_meta", "default", "develop")]
+    for section in sections:
+        for name, p in data[section].items():
+            if not isinstance(p, dict):
+                raise SourceError(f"{path.name}: {section}.{name} isn't a package entry")
             version = p.get("version")
             pkg = Package(name, version.removeprefix("==") if version else None, origin=path.name)
             if p.get("markers"):
@@ -427,13 +442,15 @@ def load_file(path: Path) -> Source:
         return PARSERS[name](path)
     if name.startswith("pylock.") and name.endswith(".toml"):
         return parse_pylock(path)
+    if name.startswith("requirements") and name.endswith(".lock"):
+        return parse_requirements(path)
     if name.endswith(".lock") and "uv" in name:
         return parse_uv_lock(path)
     if name.endswith((".txt", ".in")):
         return parse_requirements(path)
     raise SourceError(
         f"don't know how to read {path} "
-        "(expected uv.lock, pylock.toml, poetry.lock, pdm.lock, Pipfile.lock or requirements.txt)"
+        "(expected uv.lock, pylock.toml, poetry.lock, pdm.lock, Pipfile.lock, requirements.lock or requirements.txt)"
     )
 
 
