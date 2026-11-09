@@ -419,3 +419,55 @@ def test_output_is_utf8_on_a_cp1252_pipe(monkeypatch, capsys):
     assert main(["--list-targets"]) == 0
     stream.flush()
     assert stream.encoding.lower().replace("-", "") == "utf8"
+
+
+def test_markdown_report(capsys, fake_pypi):
+    code, out, err = run(
+        capsys,
+        "fastlib==2.0.0",
+        "nowheels==0.9",
+        "purewheel==3.1",
+        "-p",
+        "3.13",
+        "-t",
+        "linux-x86_64,win-amd64",
+        "--markdown",
+    )
+    assert code == 1 and not err
+    lines = out.splitlines()
+    assert lines[0] == "### wheelgap: 2 of 3 packages have gaps"
+    assert "| package | version | linux-x86_64 | win-amd64 |" in lines
+    assert "| --- | --- | --- | --- |" in lines
+    assert "| fastlib | 2.0.0 | ✓ | ● source |" in lines
+    assert "| nowheels | 0.9 | ● source | ● source |" in lines
+    assert "purewheel" not in out  # hidden like the text table, unless --all
+    assert "2 of 3 packages have gaps: 2 will build from source." in lines
+    assert "\033[" not in out and "<details>" not in out
+
+
+def test_markdown_all_explain_and_quiet(capsys, fake_pypi, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pyproject.toml").write_text("[tool.wheelgap]\nquiet = true\n")
+    code, out, err = run(
+        capsys, "fastlib==2.0.0", "purewheel==3.1", "-p", "3.13", "-t", "win-amd64", "--markdown", "--all", "--explain"
+    )
+    assert code == 1 and not err  # quiet = true doesn't clash with --explain, as with --json
+    assert "| purewheel | 3.1 | ✓ |" in out.splitlines()
+    assert "<details><summary>Why (rejected wheels)</summary>" in out
+    assert "fastlib-2.0.0-cp313-cp313-manylinux_2_17_x86_64.whl" in out
+
+
+def test_markdown_clean_run(capsys, fake_pypi):
+    code, out, _ = run(
+        capsys, "purewheel==3.1", "-p", "3.13", "-t", "linux-x86_64,win-amd64", "--markdown", "--exit-zero"
+    )
+    assert code == 0
+    assert out.splitlines()[0] == "### wheelgap: every package has a wheel for all 2 targets"
+    assert "|" not in out
+
+
+def test_markdown_and_json_conflict(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["six", "--json", "--markdown"])
+    assert exc.value.code == 2
+    assert "--json and --markdown" in capsys.readouterr().err

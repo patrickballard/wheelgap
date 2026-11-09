@@ -16,7 +16,7 @@ from .check import Row, Status, check, explain, has_sdist
 from .dockerfile import DockerfileError, read_dockerfile
 from .pyodide import PyodideLock, PyodideLockError, apply_bundled, check_targets, load_pyodide_lock
 from .pypi import check_index_url, fill_all
-from .sources import SourceError, load_inputs
+from .sources import Package, SourceError, load_inputs
 from .targets import (
     ALIASES,
     DEFAULT_GLIBC,
@@ -116,6 +116,11 @@ def make_parser() -> argparse.ArgumentParser:
         help="print only the gap summary and affected package names (--no-quiet overrides quiet = true)",
     )
     p.add_argument("--json", action="store_true", help="print JSON instead of a table")
+    p.add_argument(
+        "--markdown",
+        action="store_true",
+        help="print a Markdown report (e.g. for $GITHUB_STEP_SUMMARY) instead of a table",
+    )
     p.add_argument("--exit-zero", action="store_true", help="exit 0 even when gaps are found")
     p.add_argument(
         "--fail-on",
@@ -411,6 +416,66 @@ def gap_summary(gaps: list[Row], total: int, style: Style) -> str:
     return f"{style.bold(f'{len(gaps)} of {total} packages')} {verb} gaps: " + ", ".join(parts) + "."
 
 
+def _md(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("|", "\\|")
+
+
+def render_markdown(
+    rows: list[Row],
+    targets: list[Target],
+    source_labels: list[str],
+    skipped: list[Package],
+    args: argparse.Namespace,
+    pyodide_lock: PyodideLock | None,
+) -> list[str]:
+    """The same report as the text output, as GitHub-flavoured Markdown (for a job summary or a PR comment)."""
+    plain = Style(False)
+    gaps = [r for r in rows if not r.ok]
+    n_t = len(targets)
+    if gaps:
+        out = [f"### wheelgap: {len(gaps)} of {len(rows)} packages {'has' if len(gaps) == 1 else 'have'} gaps", ""]
+    else:
+        out = [
+            f"### wheelgap: every package has a wheel for {'all ' if n_t > 1 else ''}{n_t} target{'s' * (n_t > 1)}",
+            "",
+        ]
+    pys = ", ".join(dict.fromkeys(t.python for t in targets))
+    n_pkgs = f"{len(rows)} package{'s' * (len(rows) != 1)}"
+    out += [f"wheelgap {__version__} · {_md(' + '.join(source_labels))} · {n_pkgs} · Python {pys}", ""]
+
+    shown = rows if args.all else gaps
+    if shown:
+        multi_py = len({t.python for t in targets}) > 1
+        headers = ["package", "version"] + [t.label(multi_py) for t in targets]
+        out.append("| " + " | ".join(_md(h) for h in headers) + " |")
+        out.append("| " + " | ".join("---" for _ in headers) + " |")
+        for r in shown:
+            cells = [r.package.name, r.package.version or "?"] + [CELL[r.results[t]][0] for t in targets]
+            out.append("| " + " | ".join(_md(c) for c in cells) + " |")
+        out.append("")
+        hidden = len(rows) - len(shown)
+        if hidden:
+            noun = "package" if hidden == 1 else "packages"
+            out += [f"{hidden} {noun} with wheels for every target hidden (`--all` to show).", ""]
+
+    if gaps:
+        out += [gap_summary(gaps, len(rows), plain), ""]
+    bundled = [r for r in rows if Status.BUNDLED in r.results.values()]
+    if bundled and pyodide_lock:
+        out += [_md(bundled_line(bundled, pyodide_lock)), ""]
+    if skipped:
+        names = ", ".join(f"{p.name} ({p.skip})" for p in skipped)
+        out += [_md(f"Skipped {len(skipped)} non-index package{'s' * (len(skipped) != 1)}: {names}"), ""]
+    for r in rows:
+        if r.package.error:
+            out += [_md(f"Could not check {r.package.name}: {r.package.error}"), ""]
+    if args.explain and gaps:
+        # Fenced, so wheel filenames and reasons need no escaping.
+        lines = render_explain(gaps, targets, plain)
+        out += ["<details><summary>Why (rejected wheels)</summary>", "", "```", *lines, "```", "", "</details>", ""]
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         # Don't crash printing ✓ to a non-UTF-8 pipe (e.g. Windows cp1252).
@@ -433,8 +498,10 @@ def main(argv: list[str] | None = None) -> int:
         pyproject = find_pyproject(args.inputs)
         config = load_config(pyproject) if pyproject else {}
         quiet = args.quiet if args.quiet is not None else config.get("quiet", False)
-        # Quiet only changes the text output, so it can't clash with --explain when printing JSON.
-        if quiet and args.explain and not args.json:
+        if args.json and args.markdown:
+            parser.error("--json and --markdown can't be used together")
+        # Quiet only changes the text output, so it can't clash with --explain when printing JSON or Markdown.
+        if quiet and args.explain and not (args.json or args.markdown):
             parser.error("--explain cannot be used with quiet mode (--quiet or quiet = true; --no-quiet turns it off)")
         if args.dockerfile:
             # The image beats pyproject.toml; flags still win.
@@ -486,6 +553,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.json:
         print(report_json(rows, targets, source_labels, skipped, args.explain, pyodide_lock))
+        return code
+
+    if args.markdown:
+        print("\n".join(render_markdown(rows, targets, source_labels, skipped, args, pyodide_lock)))
         return code
 
     style = Style(use_color(args.color))

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `--markdown` prints the report as Markdown, and the GitHub Action now writes it to the run's summary page (`summary: false` turns that off). The step still passes or fails on the normal run. (#7)
+
 ## 0.5.0 (2026-11-09)
 
 wheelgap now lives at [github.com/wheelgap/wheelgap](https://github.com/wheelgap/wheelgap). Old links redirect, but update `uses:` and pre-commit `repo:` lines when you next touch them.
