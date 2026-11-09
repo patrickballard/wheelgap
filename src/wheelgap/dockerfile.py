@@ -53,15 +53,21 @@ _PY_IMPORT_RE = re.compile(r"^from\s+\S+\s+import\s")
 
 def _escape_char(lines: list[str]) -> str:
     """The `# escape=` parser directive (\\ by default, ` on Windows images)."""
+    seen: set[str] = set()
+    escape = "\\"
     for line in lines:
         m = _DIRECTIVE_RE.match(line.strip())
         if not m or m.group(1).lower() not in _DIRECTIVES:
             break  # directives come first; any other line (even another comment) ends them
-        if m.group(1).lower() == "escape":
+        name = m.group(1).lower()
+        if name in seen:
+            raise DockerfileError(f"only one {name} parser directive can be used")
+        seen.add(name)
+        if name == "escape":
             if m.group(2) not in ("`", "\\"):
                 raise DockerfileError(f"invalid escape directive {m.group(2)!r} (Docker accepts ` or \\)")
-            return m.group(2)
-    return "\\"
+            escape = m.group(2)
+    return escape
 
 
 def _from_lines(text: str) -> list[str]:
@@ -79,8 +85,13 @@ def _from_lines(text: str) -> list[str]:
 
     def finish(instruction: str) -> None:
         words = instruction.split(None, 1)
-        if len(words) == 2 and words[0].upper() == "FROM" and not _PY_IMPORT_RE.match(instruction):
-            found.append(words[1])
+        if words and words[0].upper().startswith("FROM") and words[0].upper() != "FROM":
+            raise DockerfileError(f"unknown instruction {words[0]!r} (a FROM joined to the next line?)")
+        if words and words[0].upper() == "FROM":
+            if len(words) == 1:
+                raise DockerfileError("FROM with no image")
+            if not _PY_IMPORT_RE.match(instruction):
+                found.append(words[1])
 
     for line in lines:
         stripped = line.strip()

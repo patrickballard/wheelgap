@@ -272,3 +272,17 @@ def test_escape_directive_rules(tmp_path):
     assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.12", "musl-x86_64", musl="1.2")
     with pytest.raises(DockerfileError, match="invalid escape directive"):
         read_dockerfile(_dockerfile(tmp_path, "# escape=x\nFROM python:3.12\n"))
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("# escape=`\n# escape=\\\nFROM python:3.12\n", "only one escape parser directive"),
+        ("# syntax=docker/dockerfile:1\n# syntax=docker/dockerfile:1\nFROM python:3.12\n", "only one syntax"),
+        ("FROM python:3.12 AS a\nFROM\\\npython:3.11\n", "unknown instruction 'FROMpython:3.11'"),
+        ("FROM python:3.12 AS a\nFROM\n", "FROM with no image"),
+    ],
+)
+def test_dockerfiles_docker_rejects(tmp_path, text, message):
+    with pytest.raises(DockerfileError, match=message):
+        read_dockerfile(_dockerfile(tmp_path, text))
