@@ -60,7 +60,11 @@ wheelgap psycopg2 uvloop numpy==2.3.4 -t windows,win-arm64
 
 # Take the target from the final stage's image (e.g. python:3.13-alpine
 # or ghcr.io/astral-sh/uv:0.13.7-python3.13-trixie-slim), following
-# named stages like `FROM base AS runtime` back to the image they start from
+# named stages like `FROM base AS runtime` back to the image they start from.
+# A python X.Y tag without a Debian release (python:3.13-slim) is read as
+# the release Docker Hub currently builds it on (trixie, glibc 2.41, for 3.9
+# and later); patch tags like 3.12.7-slim keep the --glibc default. Pin
+# -bookworm or -trixie for an answer that doesn't move
 wheelgap --dockerfile Dockerfile
 
 # Machine-readable, for scripts and CI
@@ -117,6 +121,8 @@ uvloop 0.21.0 on win-arm64: ● source
 If you think wheelgap got a package wrong, that output (or `--json --explain`) is all a bug report needs, with no need to share your lockfile.
 
 **Exit codes:** `0` no gaps, `1` gaps found, `2` bad input. `--exit-zero` always exits `0`. `--fail-on missing` (or `fail-on = "missing"` in `[tool.wheelgap]`) accepts source builds and only exits `1` when a package can't be installed at all.
+
+If an input can't be read (a missing lockfile, an unknown target, a bad `[tool.wheelgap]` value), `--json` prints `{"error": {"message": "...", "type": "TargetError"}}` on stdout instead of results, next to the usual `wheelgap: error:` line on stderr and exit code 2. Command-line usage errors from argparse are still plain text on stderr.
 
 Use `--ignore psycopg2` for accepted gaps (repeatable or comma-separated, with case-insensitive package-name matching and equivalent hyphens, underscores and dots): matched packages are excluded from the table, counts and exit status, and listed as ignored in text (including quiet mode), JSON and Markdown. Set `ignore = ["psycopg2"]` in `[tool.wheelgap]` to use it by default; any `--ignore` flags replace the configured list rather than adding to it, and `--ignore ""` clears it for one run.
 

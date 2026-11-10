@@ -338,6 +338,41 @@ def test_bad_pyproject_exit_2(capsys, fixtures, tmp_path):
     assert code == 2 and "glibc must be a string" in err
 
 
+def test_json_reports_input_errors_on_stdout(capsys, fixtures, tmp_path):
+    def json_error(*argv):
+        code, out, err = run(capsys, *argv, "--json")
+        assert code == 2 and err.startswith("wheelgap: error: ")  # stderr and exit code as without --json
+        return json.loads(out)["error"]
+
+    def plain_out(*argv):
+        code, out, _ = run(capsys, *argv)
+        assert code == 2
+        return out
+
+    missing = str(tmp_path / "nonexistent.lock")
+    error = json_error(missing)
+    assert set(error) == {"message", "type"} and "nonexistent.lock" in error["message"]
+    assert plain_out(missing) == ""
+
+    error = json_error("six", "-t", "nosuchplatform")
+    assert error["type"] == "TargetError" and "nosuchplatform" in error["message"]
+    assert plain_out("six", "-t", "nosuchplatform") == ""
+
+    (tmp_path / "uv.lock").write_bytes((fixtures / "uvproj" / "uv.lock").read_bytes())
+    (tmp_path / "pyproject.toml").write_text("[tool.wheelgap]\nglibc = 2.31\n")
+    error = json_error(str(tmp_path))
+    assert error["type"] == "SourceError" and "glibc must be a string" in error["message"]
+    assert plain_out(str(tmp_path)) == ""
+
+    (tmp_path / "pyproject.toml").write_text("[tool.wheelgap\n")  # malformed TOML: the catch-all branch
+    error = json_error(str(tmp_path))
+    assert error["type"] == "TOMLDecodeError"
+    assert plain_out(str(tmp_path)) == ""
+
+    error = json_error("--list-targets", "--glibc", "bad")  # --list-targets --json normally prints a list
+    assert error["type"] == "TargetError" and "glibc" in error["message"]
+
+
 def test_running_python_reports_freethreaded(monkeypatch):
     monkeypatch.setattr(sysconfig, "get_config_var", lambda name: 1 if name == "Py_GIL_DISABLED" else None)
     assert cli.running_python() == f"{sys.version_info.major}.{sys.version_info.minor}t"
