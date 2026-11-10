@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- `--dockerfile` reads an official python image whose tag names no Debian release (`python:3.13`, `python:3.13-slim`) as the release Docker Hub builds it on: trixie (glibc 2.41) for Python 3.9 and later, so `manylinux_2_39`/`manylinux_2_41` wheels are no longer reported as source builds there. Pin `-bookworm` or `-trixie` for an answer that doesn't change. (#135, thanks [@sarankumar1325](https://github.com/sarankumar1325))
+- `--dockerfile` reads an official python image whose tag names no Debian release (`python:3.13`, `python:3.13-slim`) as the release Docker Hub builds it on: trixie (glibc 2.41) for Python 3.9 and later and the release its images stopped on for older ones (bullseye, glibc 2.31, for 3.6), so `manylinux_2_39`/`manylinux_2_41` wheels are no longer reported as source builds there. Pin `-bookworm` or `-trixie` for an answer that doesn't change. (#135, thanks [@sarankumar1325](https://github.com/sarankumar1325))
 - `--online` no longer looks up packages from a private index on public PyPI: only packages whose lockfile index is PyPI are re-checked, the rest keep their locked files, and a note says how many. `poetry.lock` packages now record their source index too. (#133, thanks [@Niranjan-cyber](https://github.com/Niranjan-cyber))
 
 ## 0.7.0 (2026-11-09)
