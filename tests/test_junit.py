@@ -141,6 +141,28 @@ def test_junit_names_are_unique_within_a_suite():
         assert list(by_name) == ["armlib"]
         assert by_name["armlib"].find("failure") is not None
         assert (suite.get("tests"), suite.get("failures"), suite.get("skipped")) == ("1", "1", "0")
+    # A pass beats skipped, whichever input comes first.
+    for statuses in ([Status.NOT_NEEDED, Status.WHEEL], [Status.WHEEL, Status.NOT_NEEDED]):
+        suite, by_name = cases(*(Row(Package("armlib", "1.4.0"), {target: s}) for s in statuses))
+        assert by_name["armlib"].find("skipped") is None
+        assert (suite.get("tests"), suite.get("failures"), suite.get("skipped")) == ("1", "0", "0")
+    # Of two failures, the one that can't install at all is the one reported.
+    for statuses in ([Status.SOURCE, Status.MISSING], [Status.MISSING, Status.SOURCE]):
+        suite, by_name = cases(*(Row(Package("armlib", "1.4.0"), {target: s}) for s in statuses))
+        assert by_name["armlib"].find("failure").get("message") == "missing"
+    # Inputs that spell the name differently are still one testcase, named as the first writes it.
+    suite, by_name = cases(
+        Row(Package("PyYAML", "6.0.2"), {target: Status.WHEEL}),
+        Row(Package("pyyaml", "6.0.2"), {target: Status.SOURCE}),
+    )
+    assert list(by_name) == ["PyYAML"]
+    assert by_name["PyYAML"].find("failure") is not None
+    # An unpinned requirement has no version to show.
+    suite, by_name = cases(
+        Row(Package("armlib", None), {target: Status.WHEEL}),
+        Row(Package("armlib", "2.0"), {target: Status.WHEEL}),
+    )
+    assert list(by_name) == ["armlib", "armlib 2.0"]
     # Two versions of one package: the version goes in the name.
     suite, by_name = cases(
         Row(Package("armlib", "1.4.0"), {target: Status.WHEEL}),

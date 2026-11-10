@@ -20,7 +20,9 @@ def _cell_fails(status: Status, fail_on: str) -> bool:
 
 def _rank(cell: tuple[str | None, str | None]) -> int:
     fail, skip = cell
-    return 2 if fail is not None else 0 if skip is not None else 1
+    if fail is not None:
+        return 2 if fail == Status.SOURCE.value else 3
+    return 0 if skip is not None else 1
 
 
 def junit_xml(rows: list[Row], targets: list[Target], fail_on: str) -> str:
@@ -44,22 +46,28 @@ def junit_xml(rows: list[Row], targets: list[Target], fail_on: str) -> str:
     root = ET.Element("testsuites")
     for target in targets:
         label = target.label(multi_py)
-        merged: dict[str, tuple[str | None, str | None]] = {}  # name -> failure, skip
+        # Keyed like the rest of wheelgap, so PyYAML and pyyaml are one testcase,
+        # named as the first input writes it.
+        names: dict[tuple[str, str | None], str] = {}
+        merged: dict[tuple[str, str | None], tuple[str | None, str | None]] = {}  # failure, skip
         for row in rows:
             status = row.results[target]
-            name = row.package.name
-            if len(versions[row.package.key]) > 1:
-                name = f"{name} {row.package.version}"
+            ident = (row.package.key, row.package.version)
+            if ident not in names:
+                name = row.package.name
+                if row.package.version and len(versions[row.package.key]) > 1:
+                    name = f"{name} {row.package.version}"
+                names[ident] = name
             if status is Status.NOT_NEEDED:
                 cell: tuple[str | None, str | None] = (None, "n/a")
             elif _cell_fails(status, fail_on):
                 cell = (status.value, None)
             else:
                 cell = (None, None)
-            # The worst cell wins: a failure, then a pass, then skipped.
-            if name not in merged or _rank(cell) > _rank(merged[name]):
-                merged[name] = cell
-        cases = [(name, fail, skip) for name, (fail, skip) in merged.items()]
+            # The worst cell wins: missing or unknown, then source, then a pass, then skipped.
+            if ident not in merged or _rank(cell) > _rank(merged[ident]):
+                merged[ident] = cell
+        cases = [(names[ident], fail, skip) for ident, (fail, skip) in merged.items()]
         failures = sum(1 for _, fail, _ in cases if fail is not None)
         skipped = sum(1 for _, _, skip in cases if skip is not None)
         suite = ET.SubElement(
