@@ -35,6 +35,20 @@ WINDOWS_VARIANTS = ("windowsservercore", "nanoserver")
 IMAGE_NAMES = ("python", "library/python", "docker.io/library/python", "docker.io/python")
 UV_IMAGE = "ghcr.io/astral-sh/uv"
 UV_ARCHES = {"x86_64", "aarch64"}
+# Arches the official python images are published for, by Debian release (trixie and alpine have them all).
+# Checked on Docker Hub 2026-11-10 for the X.Y tags (python:3.13-bookworm, python:3.13-slim-bullseye).
+DEBIAN_ARCHES = {"bookworm": {"x86_64", "aarch64", "armv7l", "ppc64le"}, "bullseye": {"x86_64", "aarch64", "armv7l"}}
+# Images that stopped being rebuilt before Docker Hub dropped ppc64le/s390x still have them: patch and pre-release
+# tags (python:3.12.7-bookworm, python:3.11.0-bullseye) and these end-of-life X.Y tags. riscv64 was never built for
+# either release.
+OLD_DEBIAN_ARCHES = {"x86_64", "aarch64", "armv7l", "ppc64le", "s390x"}
+OLD_DEBIAN_TAGS = {
+    ("3.6", "bullseye"),
+    ("3.7", "bullseye"),
+    ("3.7", "bookworm"),
+    ("3.8", "bookworm"),
+    ("3.9", "bookworm"),
+}
 
 _TAG_RE = re.compile(r"^(\d+)\.(\d+)(?:\.\d+)?(?:(?:a|b|rc)\d+)?(?:-(.+))?$", re.ASCII)
 _UV_TAG_PREFIX_RE = re.compile(r"^(?:\d+\.\d+(?:\.\d+)?-)?python", re.ASCII)
@@ -551,6 +565,7 @@ def parse_image(image: str, platform: str | None = None) -> ImageTarget:
     python = f"{m.group(1)}.{m.group(2)}"
     variant = m.group(3).split("-") if m.group(3) else []  # Docker Hub tags are case-sensitive: -SLIM doesn't exist
 
+    release = None
     if alpine := next((part for part in variant if part.startswith("alpine")), None):
         family, glibc, musl = "musl", None, ALPINE_MUSL
         if (m := _ALPINE_RE.match(alpine)) and (int(m.group(1)), int(m.group(2))) <= (3, 12):
@@ -576,6 +591,16 @@ def parse_image(image: str, platform: str | None = None) -> ImageTarget:
         arch = ARCHES[platform.lower()]
         if name == UV_IMAGE and arch not in UV_ARCHES:
             raise DockerfileError(f"{image}: Astral's uv images are only published for linux/amd64 and linux/arm64")
+        if name in IMAGE_NAMES and release in DEBIAN_ARCHES:
+            frozen = not _MINOR_TAG_RE.match(tag) or (python, release) in OLD_DEBIAN_TAGS
+            if arch not in (OLD_DEBIAN_ARCHES if frozen else DEBIAN_ARCHES[release]):
+                if UNTAGGED_DEBIAN.get(python) == "trixie":
+                    hint = " (trixie is)"
+                elif (python, "bookworm") in OLD_DEBIAN_TAGS and arch in OLD_DEBIAN_ARCHES:
+                    hint = " (bookworm is)"
+                else:
+                    hint = ""
+                raise DockerfileError(f"{image} isn't published for {platform}{hint}")
     return ImageTarget(python, f"{family}-{arch}", glibc, musl)
 
 

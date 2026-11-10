@@ -43,6 +43,13 @@ from wheelgap.dockerfile import DockerfileError, ImageTarget, _heredocs, last_fr
         ("--platform=linux/arm/v7 python:3.13-alpine", ImageTarget("3.13", "musl-armv7l", musl="1.2")),
         ("--platform=linux/ppc64le python:3.13-bookworm", ImageTarget("3.13", "linux-ppc64le", glibc="2.36")),
         ("--platform=linux/riscv64 python:3.14-trixie", ImageTarget("3.14", "linux-riscv64", glibc="2.41")),
+        ("--platform=linux/s390x python:3.13-alpine", ImageTarget("3.13", "musl-s390x", musl="1.2")),
+        ("--platform=linux/riscv64 python:3.13", ImageTarget("3.13", "linux-riscv64", glibc="2.41")),
+        # Tags Docker Hub stopped rebuilding before it dropped s390x and ppc64le for bookworm and bullseye
+        ("--platform=linux/s390x python:3.9-bookworm", ImageTarget("3.9", "linux-s390x", glibc="2.36")),
+        ("--platform=linux/s390x python:3.12.7-bookworm", ImageTarget("3.12", "linux-s390x", glibc="2.36")),
+        ("--platform=linux/ppc64le python:3.11.0-slim-bullseye", ImageTarget("3.11", "linux-ppc64le", glibc="2.31")),
+        ("--platform=linux/s390x python:3.6", ImageTarget("3.6", "linux-s390x", glibc="2.31")),
         (
             "--platform=linux/arm64 ghcr.io/astral-sh/uv:python3.12-alpine3.23",
             ImageTarget("3.12", "musl-aarch64", musl="1.2"),
@@ -67,6 +74,15 @@ def test_parse_from(line, expected):
         ("--platform=linux/386 python:3.13", "only linux/amd64"),
         ("--platform=linux/s390x ghcr.io/astral-sh/uv:python3.13-bookworm-slim", "only published for linux/amd64"),
         ("python:3.13-slim-buster", "unknown image variant 'buster'"),
+        ("--platform=linux/riscv64 python:3.13-bookworm", r"python:3\.13-bookworm isn't published for linux/riscv64"),
+        ("--platform=linux/riscv64 python:3.13-slim-bookworm", r"isn't published for linux/riscv64 \(trixie is\)"),
+        ("--platform=linux/s390x python:3.13-bookworm", "isn't published for linux/s390x"),
+        ("--platform=linux/s390x python:3.13-slim-bookworm", "isn't published for linux/s390x"),
+        ("--platform=linux/ppc64le python:3.13-bullseye", "isn't published for linux/ppc64le"),
+        ("--platform=linux/s390x python:3.8-bullseye", r"isn't published for linux/s390x \(bookworm is\)$"),
+        ("--platform=linux/riscv64 python:3.9-bookworm", r"isn't published for linux/riscv64 \(trixie is\)$"),
+        ("--platform=linux/riscv64 python:3.8-bookworm", "isn't published for linux/riscv64$"),
+        ("--platform=linux/riscv64 python:3.12.7-slim-bookworm", "isn't published for linux/riscv64"),
     ],
 )
 def test_parse_from_errors(line, message):
