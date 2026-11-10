@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- With `--json`, an input error (a missing lockfile, an unknown target, a bad `[tool.wheelgap]` value) is now also printed on stdout as `{"error": {"message": ..., "type": ...}}`, so scripts and agents don't have to parse stderr. The stderr line and exit code 2 are unchanged. (#137, thanks [@sarankumar1325](https://github.com/sarankumar1325))
 - `--online` no longer looks up packages from a private index on public PyPI: only packages whose lockfile index is PyPI are re-checked, the rest keep their locked files, and a note says how many. `poetry.lock` packages now record their source index too. (#133, thanks [@Niranjan-cyber](https://github.com/Niranjan-cyber))
 
 ## 0.7.0 (2026-11-09)
