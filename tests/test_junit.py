@@ -91,16 +91,17 @@ def test_junit_skips_packages_not_needed_on_a_target(capsys, fixtures, tmp_path,
         "--junit",
         str(report),
     )
-    assert code in (0, 1), err
+    assert code == 1, err  # puresdist and nativeext build from source; winonly is missing on win-arm64
     suites = _suites(report)
     winonly_linux = _case(suites["linux-x86_64"], "winonly")
     skip = winonly_linux.find("skipped")
     assert skip is not None
     assert skip.get("message") == "n/a"
     assert int(suites["linux-x86_64"].get("skipped")) >= 1
-    # It is installed on Windows ARM, so that cell is not skipped (it may
-    # still fail if the locked wheel is only for win-amd64).
-    assert _case(suites["win-arm64"], "winonly").find("skipped") is None
+    # It is installed on Windows ARM, so that cell isn't skipped; its only wheel is for win-amd64.
+    winonly_arm = _case(suites["win-arm64"], "winonly")
+    assert winonly_arm.find("skipped") is None
+    assert winonly_arm.find("failure").get("message") == "missing"
 
 
 def test_junit_is_written_alongside_json(capsys, fixtures, tmp_path, fake_pypi):
@@ -172,3 +173,28 @@ def test_junit_names_are_unique_within_a_suite():
     assert by_name["armlib 1.4.0"].find("failure") is None
     assert by_name["armlib 2.0"].find("failure").get("message") == "missing"
     assert (suite.get("tests"), suite.get("failures")) == ("2", "1")
+
+
+def test_junit_unknown_fails_and_bundled_passes():
+    (target,) = build_targets(["3.13"], ["pyodide"])
+    rows = [
+        Row(Package("lost", "1.0"), {target: Status.UNKNOWN}),
+        Row(Package("numpy", "2.2.5"), {target: Status.BUNDLED}),
+    ]
+    # An unknown cell fails even with --fail-on missing, as it fails the exit code; bundled always passes.
+    for fail_on in ("source", "missing"):
+        (suite,) = ET.fromstring(junit_xml(rows, [target], fail_on)).findall("testsuite")
+        by_name = {c.get("name"): c for c in suite.findall("testcase")}
+        assert by_name["lost"].find("failure").get("message") == "unknown"
+        assert by_name["numpy"].find("failure") is None
+        assert by_name["numpy"].find("skipped") is None
+        assert (suite.get("tests"), suite.get("failures"), suite.get("skipped")) == ("2", "1", "0")
+
+
+def test_junit_suite_names_include_the_python_when_there_are_several():
+    targets = build_targets(["3.13", "3.14t"], ["linux-x86_64"])
+    rows = [Row(Package("armlib", "1.4.0"), {t: Status.WHEEL for t in targets})]
+    suites = ET.fromstring(junit_xml(rows, targets, "source")).findall("testsuite")
+    assert [s.get("name") for s in suites] == ["3.13 linux-x86_64", "3.14t linux-x86_64"]
+    # classname matches the suite, so dashboards keep the two Pythons apart.
+    assert [s.find("testcase").get("classname") for s in suites] == ["3.13 linux-x86_64", "3.14t linux-x86_64"]
