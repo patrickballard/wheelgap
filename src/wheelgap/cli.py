@@ -770,7 +770,13 @@ def main(argv: list[str] | None = None) -> int:
         apply_bundled(rows, targets, pyodide_lock)
     rows.sort(key=lambda r: r.package.key)
     ignore_names = args.ignore or config.get("ignore", [])
-    ignore = {canonicalize_name(name.strip()) for item in ignore_names for name in item.split(",") if name.strip()}
+    raw_ignore = [name.strip() for item in ignore_names for name in item.split(",") if name.strip()]
+    ignore = {canonicalize_name(name) for name in raw_ignore}
+    if raw_ignore and not quiet:
+        known_keys = {p.key for p in packages}
+        unmatched = list(dict.fromkeys(name for name in raw_ignore if canonicalize_name(name) not in known_keys))
+        if unmatched:
+            print(f"wheelgap: note: --ignore matches no package: {', '.join(unmatched)}", file=sys.stderr)
     # One entry per package, named as its first input writes it (PyYAML, not pyyaml).
     first_names = {r.package.key: r.package.name for r in reversed(rows) if r.package.key in ignore}
     ignored = sorted(first_names.values(), key=str.lower)

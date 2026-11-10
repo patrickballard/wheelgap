@@ -1071,7 +1071,8 @@ def test_ignore_repeated_comma_separated_and_duplicate_names(capsys, fixtures):
         "--json",
     )
     data = json.loads(out)
-    assert code == 0 and not err
+    assert code == 0
+    assert "wheelgap: note: --ignore matches no package: not-installed" in err
     assert data["ignored"] == ["armlib", "newglibc"]
     assert data["packages"] == []
     assert data["summary"] == {"packages": 0, "with_gaps": 0}
@@ -1314,3 +1315,75 @@ def test_offline_and_online_are_a_usage_error(capsys, fixtures):
         main([str(fixtures / "uvproj"), "--offline", "--online"])
     assert excinfo.value.code == 2
     assert "--offline and --online can't be used together" in capsys.readouterr().err
+
+
+def test_ignore_matches_no_package_prints_note(capsys, fixtures):
+    code, out, err = run(
+        capsys,
+        str(fixtures / "armgap"),
+        "-p",
+        "3.13",
+        "-t",
+        "linux-aarch64",
+        "--ignore",
+        "newglibc,nosuchpkg",
+    )
+    assert code == 0
+    assert "wheelgap: note: --ignore matches no package: nosuchpkg" in err
+    note_line = err.split("matches no package:")[-1]
+    assert "newglibc" not in note_line
+
+
+def test_ignore_all_names_match_no_note(capsys, fixtures):
+    code, out, err = run(
+        capsys,
+        str(fixtures / "armgap"),
+        "-p",
+        "3.13",
+        "-t",
+        "linux-aarch64",
+        "--ignore",
+        "newglibc",
+    )
+    assert "matches no package" not in err
+
+
+def test_ignore_unmatched_is_hidden_with_quiet(capsys, fixtures):
+    code, out, err = run(
+        capsys,
+        str(fixtures / "armgap"),
+        "-p",
+        "3.13",
+        "-t",
+        "linux-aarch64",
+        "--ignore",
+        "nosuchpkg",
+        "--quiet",
+    )
+    assert err == ""
+    assert code == 1
+
+
+def test_ignore_unmatched_does_not_change_exit_code(capsys, fixtures):
+    code_real, _, _ = run(
+        capsys,
+        str(fixtures / "armgap"),
+        "-p",
+        "3.13",
+        "-t",
+        "linux-aarch64",
+        "--ignore",
+        "newglibc",
+    )
+    code_unmatched, _, _ = run(
+        capsys,
+        str(fixtures / "armgap"),
+        "-p",
+        "3.13",
+        "-t",
+        "linux-aarch64",
+        "--ignore",
+        "nosuchpkg",
+    )
+    assert code_real == 0
+    assert code_unmatched == 1
