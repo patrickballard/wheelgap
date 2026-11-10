@@ -25,13 +25,16 @@ from wheelgap.dockerfile import DockerfileError, ImageTarget, _heredocs, last_fr
         ("-- python:3.13", ImageTarget("3.13", "linux-x86_64", glibc="2.41")),  # BuildKit drops a bare --
         ("--platform=linux/arm64 -- python:3.13-alpine", ImageTarget("3.13", "musl-aarch64", musl="1.2")),
         ("python:3.13-slim@sha256:" + "0" * 64, ImageTarget("3.13", "linux-x86_64", glibc="2.41")),
-        ("python:3.15.0a1-slim", ImageTarget("3.15", "linux-x86_64", glibc="2.41")),
+        ("python:3.15.0a1-slim", ImageTarget("3.15", "linux-x86_64")),
         # No Debian release in the tag: the one Docker Hub publishes that Python on (see UNTAGGED_DEBIAN)
         ("python:3.13", ImageTarget("3.13", "linux-x86_64", glibc="2.41")),
         ("python:3.13-slim", ImageTarget("3.13", "linux-x86_64", glibc="2.41")),
         ("python:3.8-slim", ImageTarget("3.8", "linux-x86_64", glibc="2.36")),
         ("python:3.6", ImageTarget("3.6", "linux-x86_64", glibc="2.31")),
         ("python:3.16-slim", ImageTarget("3.16", "linux-x86_64")),  # not published yet: falls back to --glibc
+        # A patch tag may be older than its X.Y tag (3.12.7-slim is still bookworm), so it falls back to --glibc too
+        ("python:3.12.7-slim", ImageTarget("3.12", "linux-x86_64")),
+        ("python:3.13.9", ImageTarget("3.13", "linux-x86_64")),
         ("python:3.13-windowsservercore-ltsc2022", ImageTarget("3.13", "win-amd64")),
         ("ghcr.io/astral-sh/uv:python3.13-bookworm-slim", ImageTarget("3.13", "linux-x86_64", glibc="2.36")),
         ("ghcr.io/astral-sh/uv:python3.14-trixie-slim", ImageTarget("3.14", "linux-x86_64", glibc="2.41")),
