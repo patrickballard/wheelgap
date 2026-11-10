@@ -266,6 +266,39 @@ def test_pipfile_lock_custom_categories(tmp_path):
     assert len(src.packages) == 5
 
 
+def _two_source_pipfile_lock(tmp_path):
+    path = tmp_path / "Pipfile.lock"
+    lock = {
+        "_meta": {
+            "sources": [
+                {"name": "pypi", "url": "https://pypi.org/simple", "verify_ssl": True},
+                {"name": "legacy", "url": "https://pypi.python.org/simple", "verify_ssl": True},
+                {"name": "internal", "url": "https://pkgs.example.com/simple", "verify_ssl": True},
+            ]
+        },
+        "default": {
+            "acme-utils": {"version": "==2.1.0", "index": "internal"},
+            "requests": {"version": "==2.31.0", "index": "pypi"},
+            "six": {"version": "==1.16.0", "index": "legacy"},
+            "fastlib": {"version": "==2.0.0"},
+            "ghost": {"version": "==1.0.0", "index": "not-in-meta"},
+        },
+    }
+    path.write_text(json.dumps(lock), encoding="utf-8")
+    return path
+
+
+def test_pipfile_lock_private_index_is_skipped(tmp_path):
+    (src,) = load_inputs([str(_two_source_pipfile_lock(tmp_path))])
+    assert [(p.name, p.skip) for p in src.packages] == [
+        ("acme-utils", "private index"),
+        ("requests", None),
+        ("six", None),
+        ("fastlib", None),
+        ("ghost", "private index"),  # an index the lock doesn't describe: can't tell it's PyPI
+    ]
+
+
 def test_pipfile_lock_malformed_package_entry_raises(tmp_path):
     path = tmp_path / "Pipfile.lock"
     lock = {"default": {"requests": "==2.31.0"}}

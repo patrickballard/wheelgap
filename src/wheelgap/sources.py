@@ -393,6 +393,14 @@ def parse_pipfile_lock(path: Path) -> Source:
             raise SourceError(f"{path.name}: {key} isn't a package section")
     sections = [s for s in ("default", "develop") if s in data]
     sections += [key for key in data if key not in ("_meta", "default", "develop")]
+    meta = data.get("_meta")
+    sources = meta.get("sources") if isinstance(meta, dict) else None
+    # Pipenv writes "index": "<source name>" for a package pinned to one of the Pipfile's [[source]] entries.
+    source_urls = {
+        s["name"]: s["url"]
+        for s in (sources if isinstance(sources, list) else [])
+        if isinstance(s, dict) and isinstance(s.get("name"), str) and isinstance(s.get("url"), str)
+    }
     for section in sections:
         for name, p in data[section].items():
             if not isinstance(p, dict):
@@ -406,8 +414,15 @@ def parse_pipfile_lock(path: Path) -> Source:
             pkg.skip = next((kind for kind in ("git", "hg", "svn", "bzr", "path", "file") if kind in p), None)
             if pkg.skip is None and p.get("editable"):
                 pkg.skip = "editable"
+            index = p.get("index")
+            if pkg.skip is None and index is not None and not _is_public_pypi(source_urls.get(str(index))):
+                pkg.skip = "private index"  # don't send internal names to pypi.org, or check a namesake there
             _add_once(pkgs, seen, pkg)
     return Source(path.name, pkgs)
+
+
+def _is_public_pypi(url: str | None) -> bool:
+    return url is not None and urlparse(url).hostname in ("pypi.org", "pypi.python.org")
 
 
 def _pinned_version(req: Requirement) -> str | None:

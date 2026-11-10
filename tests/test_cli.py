@@ -211,6 +211,29 @@ def test_pipfile_lock_in_current_directory(capsys, fixtures, fake_pypi, monkeypa
     assert "All 2 packages have a wheel for 1 target." in out
 
 
+def test_pipfile_lock_private_index_is_not_looked_up(capsys, tmp_path, fake_pypi):
+    path = tmp_path / "Pipfile.lock"
+    lock = {
+        "_meta": {
+            "sources": [
+                {"name": "pypi", "url": "https://pypi.org/simple"},
+                {"name": "internal", "url": "https://pkgs.example.com/simple"},
+            ]
+        },
+        "default": {
+            "acme-utils": {"version": "==2.1.0", "index": "internal"},
+            "fastlib": {"version": "==2.0.0", "index": "pypi"},
+        },
+    }
+    path.write_text(json.dumps(lock), encoding="utf-8")
+    code, out, err = run(capsys, str(path), "-p", "3.13", "-t", "linux-x86_64", "--json")
+    assert code == 0, err
+    data = json.loads(out)
+    assert data["skipped"] == [{"name": "acme-utils", "reason": "private index"}]
+    assert [p["name"] for p in data["packages"]] == ["fastlib"]
+    assert fake_pypi and not any("acme" in url for url in fake_pypi)
+
+
 def test_malformed_pipfile_lock_exits_2(capsys, tmp_path, fake_pypi):
     path = tmp_path / "Pipfile.lock"
     path.write_text("{invalid", encoding="utf-8")
