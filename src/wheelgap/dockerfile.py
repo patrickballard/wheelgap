@@ -11,6 +11,12 @@ from typing import NoReturn
 
 # Debian release in the image tag -> its glibc version.
 DEBIAN_GLIBC = {"bullseye": "2.31", "bookworm": "2.36", "trixie": "2.41"}
+# Debian release an official python X.Y tag that names none (python:3.13, python:3.13-slim) is built on, per Python.
+# Checked on Docker Hub 2026-11-10: 3.9 to 3.15 point at trixie; 3.7 and 3.8 stopped on bookworm, 3.6 on bullseye.
+UNTAGGED_DEBIAN = {"3.6": "bullseye", "3.7": "bookworm", "3.8": "bookworm"} | {f"3.{n}": "trixie" for n in range(9, 16)}
+# A patch or pre-release tag (python:3.12.7-slim) stops being rebuilt once the next one ships, so it can still be on
+# an older release than its X.Y tag (3.12.7-slim is bookworm): those keep the --glibc default.
+_MINOR_TAG_RE = re.compile(r"^\d+\.\d+(?:-|$)", re.ASCII)
 ALPINE_MUSL = "1.2"  # Alpine 3.13 and later; 3.12 and earlier ship musl 1.1
 _ALPINE_RE = re.compile(r"^alpine(\d+)\.(\d+)", re.ASCII)
 # docker --platform -> wheelgap arch
@@ -559,7 +565,10 @@ def parse_image(image: str, platform: str | None = None) -> ImageTarget:
         unknown = [part for part in variant if part not in DEBIAN_GLIBC and part != "slim"]
         if unknown:
             raise DockerfileError(f"{image}: unknown image variant '{'-'.join(unknown)}'")
-        glibc = next((DEBIAN_GLIBC[part] for part in variant if part in DEBIAN_GLIBC), None)
+        release = next((part for part in variant if part in DEBIAN_GLIBC), None)
+        if release is None and name in IMAGE_NAMES and _MINOR_TAG_RE.match(tag):
+            release = UNTAGGED_DEBIAN.get(python)
+        glibc = DEBIAN_GLIBC.get(release) if release else None
 
     arch = "x86_64"
     if platform:

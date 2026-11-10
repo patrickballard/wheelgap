@@ -60,7 +60,11 @@ wheelgap psycopg2 uvloop numpy==2.3.4 -t windows,win-arm64
 
 # Take the target from the final stage's image (e.g. python:3.13-alpine
 # or ghcr.io/astral-sh/uv:0.13.7-python3.13-trixie-slim), following
-# named stages like `FROM base AS runtime` back to the image they start from
+# named stages like `FROM base AS runtime` back to the image they start from.
+# A python X.Y tag without a Debian release (python:3.13-slim) is read as
+# the release Docker Hub currently builds it on (trixie, glibc 2.41, for 3.9
+# and later); patch tags like 3.12.7-slim keep the --glibc default. Pin
+# -bookworm or -trixie for an answer that doesn't move
 wheelgap --dockerfile Dockerfile
 
 # Machine-readable, for scripts and CI
