@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from wheelgap.check import Row, Status
 from wheelgap.cli import main
+from wheelgap.junit import junit_xml
+from wheelgap.sources import Package
+from wheelgap.targets import build_targets
 
 
 def run(capsys, *argv):
@@ -52,14 +57,26 @@ def test_junit_armgap_fails_only_on_musl(capsys, fixtures, tmp_path, fake_pypi):
     musl = _case(suites["musl-aarch64"], "armlib")
     fail = musl.find("failure")
     assert fail is not None
-    assert "source" in (fail.get("message") or fail.text or "")
+    assert fail.get("message") == "source"
+    # newglibc has no wheel for either target and no sdist: missing on both.
+    assert _case(suites["linux-aarch64"], "newglibc").find("failure").get("message") == "missing"
+    for suite in suites.values():
+        cases = suite.findall("testcase")
+        assert int(suite.get("tests")) == len(cases) == 2
+        assert int(suite.get("failures")) == sum(1 for c in cases if c.find("failure") is not None)
+        assert int(suite.get("skipped")) == 0
+    assert suites["linux-aarch64"].get("failures") == "1"
+    assert suites["musl-aarch64"].get("failures") == "2"
     # With --fail-on missing, armlib's source build is accepted on every target.
     report2 = tmp_path / "missing.xml"
     code, out, err = run(capsys, *args[:-1], str(report2), "--fail-on", "missing")
-    assert code in (0, 1), err
+    assert code == 1, err  # newglibc is still missing
     suites = _suites(report2)
     assert _case(suites["linux-aarch64"], "armlib").find("failure") is None
     assert _case(suites["musl-aarch64"], "armlib").find("failure") is None
+    for suite in suites.values():
+        assert _case(suite, "newglibc").find("failure") is not None
+        assert suite.get("failures") == "1"
 
 
 def test_junit_skips_packages_not_needed_on_a_target(capsys, fixtures, tmp_path, fake_pypi):
@@ -79,7 +96,57 @@ def test_junit_skips_packages_not_needed_on_a_target(capsys, fixtures, tmp_path,
     winonly_linux = _case(suites["linux-x86_64"], "winonly")
     skip = winonly_linux.find("skipped")
     assert skip is not None
-    assert (skip.get("message") or "n/a") == "n/a"
+    assert skip.get("message") == "n/a"
+    assert int(suites["linux-x86_64"].get("skipped")) >= 1
     # It is installed on Windows ARM, so that cell is not skipped (it may
     # still fail if the locked wheel is only for win-amd64).
     assert _case(suites["win-arm64"], "winonly").find("skipped") is None
+
+
+def test_junit_is_written_alongside_json(capsys, fixtures, tmp_path, fake_pypi):
+    report = tmp_path / "report.xml"
+    args = [str(fixtures / "armgap"), "-p", "3.13", "-t", "musl-aarch64", "--json"]
+    _, plain, _ = run(capsys, *args)
+    code, out, _ = run(capsys, *args, "--junit", str(report))
+    assert code == 1
+    assert out == plain  # stdout is the same report
+    assert set(_suites(report)) == {"musl-aarch64"}
+
+
+def test_junit_write_error_is_exit_2(capsys, fixtures, tmp_path, fake_pypi):
+    args = [str(fixtures / "armgap"), "-p", "3.13", "-t", "musl-aarch64"]
+    code, out, err = run(capsys, *args, "--junit", str(tmp_path / "nodir" / "report.xml"))
+    assert code == 2
+    assert "wheelgap: error:" in err
+    # With --json, the error is on stdout too, like every other exit 2.
+    code, out, err = run(capsys, *args, "--json", "--junit", str(tmp_path / "nodir" / "report.xml"))
+    assert code == 2
+    assert "error" in json.loads(out)
+    # An empty PATH (an unset CI variable) is an error, not a silently missing report.
+    code, out, err = run(capsys, *args, "--junit", "")
+    assert code == 2
+    assert "wheelgap: error:" in err
+
+
+def test_junit_names_are_unique_within_a_suite():
+    (target,) = build_targets(["3.13"], ["linux-x86_64"])
+
+    def cases(*rows):
+        (suite,) = ET.fromstring(junit_xml(list(rows), [target], "source")).findall("testsuite")
+        return suite, {c.get("name"): c for c in suite.findall("testcase")}
+
+    # Two inputs lock the same version: one testcase, and the failing cell wins.
+    for statuses in ([Status.WHEEL, Status.SOURCE], [Status.SOURCE, Status.NOT_NEEDED]):
+        suite, by_name = cases(*(Row(Package("armlib", "1.4.0"), {target: s}) for s in statuses))
+        assert list(by_name) == ["armlib"]
+        assert by_name["armlib"].find("failure") is not None
+        assert (suite.get("tests"), suite.get("failures"), suite.get("skipped")) == ("1", "1", "0")
+    # Two versions of one package: the version goes in the name.
+    suite, by_name = cases(
+        Row(Package("armlib", "1.4.0"), {target: Status.WHEEL}),
+        Row(Package("armlib", "2.0"), {target: Status.MISSING}),
+    )
+    assert list(by_name) == ["armlib 1.4.0", "armlib 2.0"]
+    assert by_name["armlib 1.4.0"].find("failure") is None
+    assert by_name["armlib 2.0"].find("failure").get("message") == "missing"
+    assert (suite.get("tests"), suite.get("failures")) == ("2", "1")

@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from typing import TYPE_CHECKING
+from pathlib import Path
 
-from wheelgap.check import Row, Status, Target
-
-if TYPE_CHECKING:
-    pass
+from .check import Row, Status
+from .targets import Target
 
 
 def _cell_fails(status: Status, fail_on: str) -> bool:
@@ -20,29 +18,48 @@ def _cell_fails(status: Status, fail_on: str) -> bool:
     return False
 
 
+def _rank(case: tuple[str | None, str | None]) -> int:
+    fail, skip = case
+    return 2 if fail is not None else 0 if skip is not None else 1
+
+
 def junit_xml(rows: list[Row], targets: list[Target], fail_on: str) -> str:
     """One testsuite per target, one testcase per package.
 
     A cell is a failure when its status fails the run (`missing`, `unknown`,
     and `source` unless `--fail-on missing`). `n/a` is skipped. Other statuses
     (wheel, bundled, and source with `--fail-on missing`) are passes.
+
+    Dashboards key a test on classname + name, so each name appears once per
+    suite: a package locked at several versions gets the version in its name,
+    and one that several inputs lock at the same version is one testcase,
+    which fails if any of them fails.
     """
+    versions: dict[str, set[str | None]] = {}
+    for row in rows:
+        versions.setdefault(row.package.key, set()).add(row.package.version)
     multi_py = len({t.python for t in targets}) > 1
     # A <testsuites> wrapper is accepted by every dashboard and keeps several
     # suites in one file.
     root = ET.Element("testsuites")
     for target in targets:
         label = target.label(multi_py)
-        cases: list[tuple[str, str | None, str | None]] = []  # name, failure, skip
+        merged: dict[str, tuple[str | None, str | None]] = {}  # name -> failure, skip
         for row in rows:
             status = row.results[target]
             name = row.package.name
+            if len(versions[row.package.key]) > 1:
+                name = f"{name} {row.package.version}"
             if status is Status.NOT_NEEDED:
-                cases.append((name, None, "n/a"))
+                case: tuple[str | None, str | None] = (None, "n/a")
             elif _cell_fails(status, fail_on):
-                cases.append((name, status.value, None))
+                case = (status.value, None)
             else:
-                cases.append((name, None, None))
+                case = (None, None)
+            # The worst cell wins: a failure, then a pass, then skipped.
+            if name not in merged or _rank(case) > _rank(merged[name]):
+                merged[name] = case
+        cases = [(name, fail, skip) for name, (fail, skip) in merged.items()]
         failures = sum(1 for _, fail, _ in cases if fail is not None)
         skipped = sum(1 for _, _, skip in cases if skip is not None)
         suite = ET.SubElement(
@@ -64,6 +81,4 @@ def junit_xml(rows: list[Row], targets: list[Target], fail_on: str) -> str:
 
 
 def write_junit(path: str, rows: list[Row], targets: list[Target], fail_on: str) -> None:
-    from pathlib import Path
-
     Path(path).write_text(junit_xml(rows, targets, fail_on), encoding="utf-8")
