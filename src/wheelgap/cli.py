@@ -18,7 +18,7 @@ from .check import Row, Status, check, explain, has_sdist
 from .dockerfile import DockerfileError, read_dockerfile
 from .pyodide import PyodideLock, PyodideLockError, apply_bundled, check_targets, load_pyodide_lock
 from .pypi import check_index_url, fill_all, is_pypi, recheck_lock
-from .sources import Package, SourceError, load_inputs, pythons_outside_lock
+from .sources import Package, Source, SourceError, load_inputs, pythons_outside_lock
 from .targets import (
     ALIASES,
     DEFAULT_ANDROID_API,
@@ -132,6 +132,7 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--online", action="store_true", help="re-check lockfile packages against PyPI instead of trusting the lockfile"
     )
+    p.add_argument("--offline", action="store_true", help="never contact an index; fail if an input needs one")
     p.add_argument("--all", action="store_true", help="show every package, not just the ones with gaps")
     p.add_argument("--explain", action="store_true", help="for each gap, list the wheels that were rejected and why")
     p.add_argument(
@@ -583,6 +584,28 @@ def input_error_json(e: Exception) -> int:
     return 2
 
 
+def require_offline(sources: list[Source]) -> None:
+    """--offline: raise SourceError if an input has packages that can only be answered by looking them up."""
+    problems = []
+    for s in sources:
+        need = [p.name for p in s.packages if not p.skip and p.files is None]
+        if need:
+            names = ", ".join(need[:3]) + (", …" if len(need) > 3 else "")
+            problems.append(
+                f"{s.label} needs the index for {len(need)} package{'s' if len(need) != 1 else ''} ({names})"
+            )
+    if problems:
+        raise SourceError(
+            f"--offline: {'; '.join(problems)}; use a lockfile that lists each package's files, or drop --offline"
+        )
+
+
+def refuse_pyodide_url(spec: str) -> None:
+    """--offline: a pyodide-lock.json URL would be downloaded, so ask for a local copy instead."""
+    if "://" in spec:
+        raise PyodideLockError(f"--offline: {spec} would be downloaded; save it and pass its path, or drop --offline")
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         # Don't crash printing ✓ to a non-UTF-8 pipe (e.g. Windows cp1252).
@@ -601,6 +624,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--json and --markdown can't be used together")
     if args.list_targets and args.markdown:
         parser.error("--list-targets has no Markdown form (use --json)")
+    if args.offline and args.online:
+        parser.error("--offline and --online can't be used together")
     try:
         if args.list_targets:
             pyproject = find_pyproject(args.inputs)
@@ -631,9 +656,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         check_index_url()
         sources = load_inputs(args.inputs or ["."])
+        if args.offline:
+            require_offline(sources)
         fail_on = args.fail_on or config.get("fail-on", "source")
         pyodide_lock = None
         if args.pyodide_lock:
+            if args.offline:
+                refuse_pyodide_url(args.pyodide_lock)
             pyodide_lock = load_pyodide_lock(args.pyodide_lock)
             check_targets(pyodide_lock, targets)  # asked for explicitly, so a mismatch is an error
         elif (lock_spec := config.get("pyodide-lock")) and any(PLATFORMS[t.platform][0] == "pyodide" for t in targets):
@@ -641,6 +670,8 @@ def main(argv: list[str] | None = None) -> int:
             # affects `wheelgap -t linux` in the same project. A relative path is relative to pyproject.toml.
             if pyproject and not lock_spec.lower().startswith(("http://", "https://")):
                 lock_spec = str(pyproject.parent / lock_spec)
+            if args.offline:
+                refuse_pyodide_url(lock_spec)
             pyodide_lock = load_pyodide_lock(lock_spec)
             check_targets(pyodide_lock, targets)  # pyodide targets but none for this lock's Python: say so
     except (TargetError, SourceError, DockerfileError, PyodideLockError, OSError) as e:
@@ -660,6 +691,14 @@ def main(argv: list[str] | None = None) -> int:
         )
     for s in sources:
         if outside := pythons_outside_lock(s, targets):
+            if args.offline:  # no re-check, so every locked package may lack wheels for those Pythons
+                print(
+                    f"wheelgap: note: {s.label} is locked for Python {s.requires_python}, so it may be missing "
+                    f"wheels for Python {', '.join(outside)}; with --offline its packages weren't re-checked on the "
+                    "index, so they may show false gaps for those Pythons",
+                    file=sys.stderr,
+                )
+                continue
             if args.online:  # fill_all looked up the PyPI packages; the others kept the lock's files
                 other = sum(1 for p in s.packages if not p.skip and p.files is not None and not is_pypi(p.registry))
                 failed = 0

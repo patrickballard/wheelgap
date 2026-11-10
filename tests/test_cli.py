@@ -1065,3 +1065,57 @@ def test_online_still_warns_about_private_packages_locked_for_other_pythons(caps
     (tmp_path / "uv.lock").write_text(lock, encoding="utf-8")
     code, _, err = run(capsys, str(tmp_path), "--online", "-q", "-p", "3.13", "-t", "linux-x86_64")
     assert fake_pypi == [] and "1 from other indexes may show false gaps" in err
+
+
+def test_offline_uses_the_lock_and_never_contacts_the_index(capsys, fixtures, fake_pypi):
+    args = [str(fixtures / "uvproj"), "-p", "3.13", "-t", "linux-x86_64", "--json"]
+    expected = run(capsys, *args)
+    assert fake_pypi == []  # a uv.lock inside its requires-python needs no lookups
+    assert run(capsys, *args, "--offline") == expected
+    assert fake_pypi == [] and json.loads(expected[1])["packages"]
+
+
+def test_offline_refuses_inputs_that_need_the_index(capsys, fixtures, fake_pypi):
+    code, out, err = run(capsys, str(fixtures / "reqproj" / "requirements.txt"), "--offline", "-p", "3.13")
+    assert code == 2 and not out
+    assert err == (
+        "wheelgap: error: --offline: requirements.txt needs the index for 4 packages "
+        "(fastlib, unpinned, winonly, …); use a lockfile that lists each package's files, or drop --offline\n"
+    )
+    assert fake_pypi == []
+
+
+def test_offline_names_at_most_three_packages(capsys, tmp_path, fake_pypi):
+    req = tmp_path / "requirements.txt"
+    req.write_text("a==1\nb==1\nc==1\nd==1\n", encoding="utf-8")
+    code, out, err = run(capsys, str(req), "--offline", "-p", "3.13", "--json")
+    assert code == 2 and fake_pypi == []
+    message = (
+        "--offline: requirements.txt needs the index for 4 packages (a, b, c, …); "
+        "use a lockfile that lists each package's files, or drop --offline"
+    )
+    assert json.loads(out)["error"]["message"] == message
+
+
+def test_offline_skips_the_requires_python_recheck(capsys, fake_pypi, tmp_path):
+    (tmp_path / "uv.lock").write_text(LOCK_312_ONLY, encoding="utf-8")
+    code, out, err = run(capsys, str(tmp_path), "--offline", "-q", "-p", "3.13", "-t", "linux-x86_64", "--json")
+    assert fake_pypi == []
+    rows = {p["name"]: p["results"] for p in json.loads(out)["packages"]}
+    assert rows["fastlib"] == {"linux-x86_64": "source"}  # only the lock's cp312 wheel, as the note warns
+    assert "uv.lock is locked for Python ==3.12.*, so it may be missing wheels for Python 3.13" in err
+    assert "with --offline its packages weren't re-checked on the index, so they may show false gaps" in err
+
+
+def test_offline_refuses_a_pyodide_lock_url(capsys, fixtures, fake_pypi):
+    url = "https://cdn.example.com/pyodide-lock.json"
+    code, out, err = run(capsys, str(fixtures / "uvproj"), "--offline", "--pyodide-lock", url, "-p", "3.13")
+    assert code == 2 and not out and fake_pypi == []
+    assert f"--offline: {url} would be downloaded" in err
+
+
+def test_offline_and_online_are_a_usage_error(capsys, fixtures):
+    with pytest.raises(SystemExit) as excinfo:
+        main([str(fixtures / "uvproj"), "--offline", "--online"])
+    assert excinfo.value.code == 2
+    assert "--offline and --online can't be used together" in capsys.readouterr().err

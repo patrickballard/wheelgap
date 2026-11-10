@@ -3,6 +3,7 @@
 ## Unreleased
 
 - `--dockerfile` says when an official python image isn't published for the `--platform` asked for, instead of checking a target Docker can't pull: `FROM --platform=linux/riscv64 python:3.13-bookworm` is now an error (`... isn't published for linux/riscv64 (3.13-trixie is)`), as are s390x on current `bookworm` tags and ppc64le or s390x on current `bullseye` tags. Patch tags and the end-of-life tags that were still built for those arches are accepted. (#143, thanks [@sarankumar1325](https://github.com/sarankumar1325))
+- `--offline` never contacts an index, for CI and coding agents without network: an input that needs a lookup (a requirements file, `Pipfile.lock`, package names, lockfile entries with no file list) exits 2 with an error naming the packages (as does a `--pyodide-lock` URL), and the `requires-python` re-check is skipped with a note that those Pythons may show false gaps. It can't be combined with `--online`. (#140, thanks [@sarankumar1325](https://github.com/sarankumar1325))
 
 ## 0.8.0 (2026-11-10)
 
