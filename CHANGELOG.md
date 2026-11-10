@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- `--ignore` (and `ignore = [...]` in `[tool.wheelgap]`) now prints a note on stderr when a name matches no package in any input, so a typo or a stale entry no longer hides silently. `-q` hides it; the exit code is unchanged. (#141)
+- `--ignore` (and `ignore = [...]` in `[tool.wheelgap]`) now prints a note on stderr when a name matches no package in any input, so a typo or a stale entry no longer hides silently. `-q` hides it; the exit code is unchanged. (#158, thanks [@bouhafara](https://github.com/bouhafara))
+- Show which targets have gaps in the text summary when checking multiple targets. (#157, thanks [@jwalith4418-Mj](https://github.com/jwalith4418-Mj))
 - Version ranges now select the newest matching release whose non-yanked files support the target's Python through `Requires-Python`, when all targets share one Python major/minor version. A target Python such as `3.8` counts as a current 3.8.x, so `>=3.8.1` admits it. Missing or invalid metadata remains unrestricted; runs checking different Python versions keep the existing selection behavior. (#156, thanks [@Swarneil1905](https://github.com/Swarneil1905))
 - Packages from a private index that the lock has no file list for (an old-format `poetry.lock`, which keeps hashes under `[metadata.hashes]`) are listed as skipped instead of being looked up on public PyPI by name, so internal package names aren't sent to pypi.org. (#153, thanks [@bfs2021](https://github.com/bfs2021))
 - Projects with `[tool.uv] required-environments` are now checked for the native targets those markers select, instead of the built-in defaults, when no targets are set by `-t`, `--dockerfile` or `[tool.wheelgap]`. Inferred targets are explained on stderr; Linux markers include both glibc and musl. Add `[tool.wheelgap] targets` or `-t` to check other targets too; markers that match no native target keep the defaults, with a note. (#150, thanks [@Swarneil1905](https://github.com/Swarneil1905))

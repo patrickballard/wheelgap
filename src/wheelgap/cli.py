@@ -532,6 +532,28 @@ def gap_summary(gaps: list[Row], total: int, style: Style) -> str:
     return f"{style.bold(f'{len(gaps)} of {total} {noun}')} {verb} gaps: " + ", ".join(parts) + "."
 
 
+def target_lines(gaps: list[Row], targets: list[Target], style: Style) -> list[str]:
+    if len(targets) < 2:
+        return []
+
+    multi_py = len({target.python for target in targets}) > 1
+    lines = []
+    for target in targets:
+        statuses = [row.results[target] for row in gaps]
+        parts = []
+        if source := statuses.count(Status.SOURCE):
+            parts.append(style.yellow(f"{source} from source"))
+        if missing := statuses.count(Status.MISSING):
+            parts.append(style.red(f"{missing} missing"))
+        if unknown := statuses.count(Status.UNKNOWN):
+            parts.append(style.dim(f"{unknown} unknown"))
+        if parts:
+            lines.append((target.label(multi_py), ", ".join(parts)))
+
+    width = max((len(label) for label, _ in lines), default=0)
+    return [f"{label:<{width}}  {counts}" for label, counts in lines]
+
+
 _MD_SPECIAL = re.compile(r"([\\`*_\[\]<>#|~&])")
 
 
@@ -853,6 +875,8 @@ def main(argv: list[str] | None = None) -> int:
         print(style.green(f"✓ {what} a wheel for {'every one of ' if n_t > 1 else ''}{n_t} target{'s' * (n_t > 1)}."))
         return 0
 
+    for line in target_lines(gaps, targets, style):
+        print(line)
     print(gap_summary(gaps, len(rows), style))
     if not args.explain:
         print(style.dim("Run with --explain to see which wheels were rejected and why."))

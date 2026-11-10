@@ -735,6 +735,34 @@ def test_python_version_file_with_nothing_usable_uses_running_python(capsys, fix
     assert [t["python"] for t in json.loads(out)["targets"]] == [cli.running_python()]
 
 
+def test_text_summary_lists_only_targets_with_gaps(capsys, fixtures):
+    code, out, _ = run(
+        capsys,
+        str(fixtures / "armgap"),
+        "-p",
+        "3.13",
+        "-t",
+        "linux-aarch64,musl-aarch64,win-arm64",
+        "--glibc",
+        "2.39",
+    )
+    assert code == 1
+    lines = out.splitlines()
+    summary_index = next(i for i, line in enumerate(lines) if "have gaps:" in line)
+    assert lines[summary_index - 2 : summary_index] == [
+        "musl-aarch64  1 from source, 1 missing",
+        "win-arm64     1 from source, 1 missing",
+    ]
+    assert not any(line.startswith("linux-aarch64 ") for line in lines)
+
+
+def test_single_target_has_no_per_target_summary(capsys, fixtures):
+    code, out, _ = run(capsys, str(fixtures / "armgap"), "-p", "3.13", "-t", "musl-aarch64")
+    assert code == 1
+    assert "have gaps:" in out
+    assert not any(line.startswith("musl-aarch64 ") for line in out.splitlines())
+
+
 def test_gap_summary_counts_each_package_once():
     from wheelgap.check import Row, Status
     from wheelgap.cli import Style, gap_summary
@@ -1365,25 +1393,8 @@ def test_ignore_unmatched_is_hidden_with_quiet(capsys, fixtures):
 
 
 def test_ignore_unmatched_does_not_change_exit_code(capsys, fixtures):
-    code_real, _, _ = run(
-        capsys,
-        str(fixtures / "armgap"),
-        "-p",
-        "3.13",
-        "-t",
-        "linux-aarch64",
-        "--ignore",
-        "newglibc",
-    )
-    code_unmatched, _, _ = run(
-        capsys,
-        str(fixtures / "armgap"),
-        "-p",
-        "3.13",
-        "-t",
-        "linux-aarch64",
-        "--ignore",
-        "nosuchpkg",
-    )
-    assert code_real == 0
-    assert code_unmatched == 1
+    args = [str(fixtures / "armgap"), "-p", "3.13", "-t", "linux-aarch64"]
+    code_plain, _, _ = run(capsys, *args)
+    code_unmatched, _, err = run(capsys, *args, "--ignore", "nosuchpkg")
+    assert "matches no package: nosuchpkg" in err
+    assert code_unmatched == code_plain == 1
