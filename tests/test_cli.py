@@ -1398,3 +1398,79 @@ def test_ignore_unmatched_does_not_change_exit_code(capsys, fixtures):
     code_unmatched, _, err = run(capsys, *args, "--ignore", "nosuchpkg")
     assert "matches no package: nosuchpkg" in err
     assert code_unmatched == code_plain == 1
+
+
+def _assert_matches_output_schema(data):
+    """A small hand-written check of report_json() against docs/wheelgap-output.schema.json.
+
+    Types, required keys and allowed Status values only — no schema library, so
+    pyproject.toml / uv.lock stay unchanged.
+    """
+    statuses = {"wheel", "source", "missing", "unknown", "n/a", "bundled"}
+    assert isinstance(data, dict)
+    for key in ("version", "sources", "targets", "packages", "skipped", "ignored", "summary"):
+        assert key in data
+    assert isinstance(data["version"], str) and data["version"]
+    assert isinstance(data["sources"], list) and all(isinstance(s, str) for s in data["sources"])
+    assert isinstance(data["ignored"], list) and all(isinstance(s, str) for s in data["ignored"])
+    labels = []
+    for t in data["targets"]:
+        assert set(t) == {"label", "python", "platform"}
+        assert all(isinstance(t[k], str) and t[k] for k in t)
+        labels.append(t["label"])
+    assert len(labels) == len(set(labels))
+    for pkg in data["packages"]:
+        assert {"name", "version", "error", "results"} <= set(pkg)
+        assert set(pkg) <= {"name", "version", "error", "results", "rejected", "via", "bundled"}
+        assert isinstance(pkg["name"], str) and pkg["name"]
+        assert pkg["version"] is None or isinstance(pkg["version"], str)
+        assert pkg["error"] is None or isinstance(pkg["error"], str)
+        assert isinstance(pkg["results"], dict) and set(pkg["results"]) == set(labels)
+        assert set(pkg["results"].values()) <= statuses
+        if "rejected" in pkg:
+            assert isinstance(pkg["rejected"], dict)
+            for label, items in pkg["rejected"].items():
+                assert label in labels
+                assert isinstance(items, list)
+                for item in items:
+                    assert set(item) == {"file", "reason"}
+                    assert isinstance(item["file"], str) and isinstance(item["reason"], str)
+        if "via" in pkg:
+            assert isinstance(pkg["via"], dict)
+            for label, path in pkg["via"].items():
+                assert label in labels
+                assert isinstance(path, list) and all(isinstance(s, str) for s in path)
+    for item in data["skipped"]:
+        assert set(item) == {"name", "reason"}
+        assert isinstance(item["name"], str) and isinstance(item["reason"], str)
+    summary = data["summary"]
+    assert set(summary) == {"packages", "with_gaps"}
+    assert summary["packages"] == len(data["packages"])
+    assert isinstance(summary["with_gaps"], int) and 0 <= summary["with_gaps"] <= summary["packages"]
+    # with_gaps counts packages that are not all wheel/n/a/bundled
+    expected = sum(
+        1 for pkg in data["packages"] if any(s in {"source", "missing", "unknown"} for s in pkg["results"].values())
+    )
+    assert summary["with_gaps"] == expected
+
+
+def test_json_output_matches_schema(capsys, fixtures):
+    """--json on the uvproj and armgap fixtures matches the published schema."""
+    cases = [
+        [str(fixtures / "uvproj"), "-p", "3.13", "-t", "linux-x86_64,win-amd64", "--json"],
+        [str(fixtures / "armgap"), "-p", "3.13", "-t", "linux-aarch64,musl-aarch64", "--json"],
+        [str(fixtures / "uvproj"), "-p", "3.13,3.14t", "-t", "win-amd64", "--json"],
+        [str(fixtures / "armgap"), "-p", "3.13", "-t", "musl-aarch64", "--json", "--explain"],
+        [str(fixtures / "uvproj"), "-p", "3.13", "-t", "linux-x86_64,win-amd64", "--json", "--ignore", "winonly"],
+    ]
+    for args in cases:
+        code, out, err = run(capsys, *args)
+        assert code in (0, 1), err
+        data = json.loads(out)
+        assert "error" not in data, data
+        _assert_matches_output_schema(data)
+        if "--explain" in args:
+            assert all("rejected" in pkg and "via" in pkg for pkg in data["packages"])
+        if "--ignore" in args:
+            assert "winonly" in data["ignored"]
+            assert all(pkg["name"] != "winonly" for pkg in data["packages"])
