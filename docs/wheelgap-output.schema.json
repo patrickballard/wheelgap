@@ -2,7 +2,7 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://github.com/wheelgap/wheelgap/blob/main/docs/wheelgap-output.schema.json",
     "title": "wheelgap --json report",
-    "description": 'The object printed by `wheelgap --json` from report_json() in src/wheelgap/cli.py. This schema does not cover `--list-targets --json` or the `{"error": ...}` object printed on input errors.',
+    "description": "The object printed by `wheelgap --json` from report_json() in src/wheelgap/cli.py. This schema does not cover `--list-targets --json` or the `{\"error\": ...}` object printed on input errors.",
     "type": "object",
     "additionalProperties": false,
     "required": ["version", "sources", "targets", "packages", "skipped", "ignored", "summary"],
@@ -11,7 +11,7 @@
         "sources": {
             "type": "array",
             "description": "Labels of the inputs that were checked (lockfiles, requirements files, or package names).",
-            "items": {"type": "string"},
+            "items": {"type": "string"}
         },
         "targets": {
             "type": "array",
@@ -23,23 +23,23 @@
                 "properties": {
                     "label": {
                         "type": "string",
-                        "description": "Key used in results/rejected/via: the platform alone when one Python is checked, or 'PYTHON PLATFORM' when several are.",
+                        "description": "Key used in results/rejected/via: the platform alone when one Python is checked, or 'PYTHON PLATFORM' when several are."
                     },
                     "python": {
                         "type": "string",
-                        "description": "Python version, with a trailing t for free-threaded builds.",
+                        "description": "Python version, with a trailing t for free-threaded builds."
                     },
                     "platform": {
                         "type": "string",
-                        "description": "Platform name such as linux-x86_64 or musl-aarch64.",
-                    },
-                },
-            },
+                        "description": "Platform name such as linux-x86_64 or musl-aarch64."
+                    }
+                }
+            }
         },
         "packages": {
             "type": "array",
             "description": "One entry per package that is installed on at least one target.",
-            "items": {"$ref": "#/$defs/package"},
+            "items": {"$ref": "#/$defs/package"}
         },
         "skipped": {
             "type": "array",
@@ -48,13 +48,13 @@
                 "type": "object",
                 "additionalProperties": false,
                 "required": ["name", "reason"],
-                "properties": {"name": {"type": "string"}, "reason": {"type": "string"}},
-            },
+                "properties": {"name": {"type": "string"}, "reason": {"type": "string"}}
+            }
         },
         "ignored": {
             "type": "array",
             "description": "Package names excluded by --ignore or ignore = [...] in [tool.wheelgap].",
-            "items": {"type": "string"},
+            "items": {"type": "string"}
         },
         "summary": {
             "type": "object",
@@ -65,16 +65,16 @@
                 "with_gaps": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": "Packages whose results include source, missing or unknown.",
-                },
-            },
-        },
+                    "description": "Packages whose results include source, missing or unknown."
+                }
+            }
+        }
     },
     "$defs": {
         "status": {
             "type": "string",
             "description": "Per-target result from wheelgap.check.Status.",
-            "enum": ["wheel", "source", "missing", "unknown", "n/a", "bundled"],
+            "enum": ["wheel", "source", "missing", "unknown", "n/a", "bundled"]
         },
         "package": {
             "type": "object",
@@ -87,31 +87,31 @@
                 "results": {
                     "type": "object",
                     "description": "Status for each target, keyed by that target's label.",
-                    "additionalProperties": {"$ref": "#/$defs/status"},
+                    "additionalProperties": {"$ref": "#/$defs/status"}
                 },
                 "rejected": {
                     "type": "object",
-                    "description": "Present with --explain: rejected wheels and reasons, keyed by target label, only for targets with a gap.",
+                    "description": "Present with --explain: rejected wheels and reasons, keyed by target label, only for targets whose result is source or missing.",
                     "additionalProperties": {
                         "type": "array",
                         "items": {
                             "type": "object",
                             "additionalProperties": false,
                             "required": ["file", "reason"],
-                            "properties": {"file": {"type": "string"}, "reason": {"type": "string"}},
-                        },
-                    },
+                            "properties": {"file": {"type": "string"}, "reason": {"type": "string"}}
+                        }
+                    }
                 },
                 "via": {
                     "type": "object",
-                    "description": "Present with --explain: dependency path that installs the package on a target (uv.lock). Empty object when the input has no graph.",
-                    "additionalProperties": {"type": "array", "items": {"type": "string"}},
+                    "description": "Present with --explain: dependency path that installs the package, keyed by target label, for the same targets as rejected (uv.lock). Empty object when the input has no graph.",
+                    "additionalProperties": {"type": "array", "items": {"type": "string"}}
                 },
                 "bundled": {
                     "description": "Present with --pyodide-lock when this package is bundled on a Pyodide target: the version Pyodide ships.",
-                    "type": ["string", "object", "null"],
-                },
-            },
-        },
-    },
+                    "type": "string"
+                }
+            }
+        }
+    }
 }

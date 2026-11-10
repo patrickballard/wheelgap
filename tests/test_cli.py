@@ -1,10 +1,12 @@
 import json
 import sys
 import sysconfig
+from pathlib import Path
 
 import pytest
 
 from wheelgap import cli
+from wheelgap.check import Status
 from wheelgap.cli import main
 from wheelgap.targets import ALIASES, DEFAULT_PLATFORMS, PLATFORMS
 
@@ -1400,13 +1402,53 @@ def test_ignore_unmatched_does_not_change_exit_code(capsys, fixtures):
     assert code_unmatched == code_plain == 1
 
 
-def _assert_matches_output_schema(data):
-    """A small hand-written check of report_json() against docs/wheelgap-output.schema.json.
+OUTPUT_SCHEMA = Path(__file__).parent.parent / "docs" / "wheelgap-output.schema.json"
+JSON_TYPES = {"object": dict, "array": list, "string": str, "integer": int, "null": type(None)}
 
-    Types, required keys and allowed Status values only — no schema library, so
-    pyproject.toml / uv.lock stay unchanged.
+
+def _check_schema(value, schema, root, where="$"):
+    """Validate `value` against the JSON Schema keywords the output schema uses, and no others."""
+    known = {"$ref", "type", "enum", "minimum", "required", "properties", "additionalProperties", "items"}
+    annotations = {"$schema", "$id", "$defs", "title", "description"}
+    assert set(schema) <= known | annotations, f"{where}: the test doesn't check {set(schema) - known - annotations}"
+    if "$ref" in schema:
+        prefix, _, name = schema["$ref"].rpartition("/")
+        assert prefix == "#/$defs", schema["$ref"]
+        _check_schema(value, root["$defs"][name], root, where)
+    if "type" in schema:
+        names = schema["type"] if isinstance(schema["type"], list) else [schema["type"]]
+        # bool is an int in Python, but not an integer in JSON Schema
+        assert not isinstance(value, bool) and isinstance(value, tuple(JSON_TYPES[n] for n in names)), (where, value)
+    if "enum" in schema:
+        assert value in schema["enum"], (where, value)
+    if "minimum" in schema:
+        assert value >= schema["minimum"], (where, value)
+    if isinstance(value, dict):
+        properties = schema.get("properties", {})
+        assert set(schema.get("required", [])) <= set(value), (where, sorted(value))
+        for key, item in value.items():
+            if key in properties:
+                _check_schema(item, properties[key], root, f"{where}.{key}")
+            else:
+                extra = schema.get("additionalProperties", True)
+                assert extra is not False, f"{where}: {key} isn't in the schema"
+                if isinstance(extra, dict):
+                    _check_schema(item, extra, root, f"{where}.{key}")
+    if isinstance(value, list) and "items" in schema:
+        for i, item in enumerate(value):
+            _check_schema(item, schema["items"], root, f"{where}[{i}]")
+
+
+def _assert_matches_output_schema(data):
+    """Check report_json() output against docs/wheelgap-output.schema.json.
+
+    The file is read with a small hand-written validator (no schema library, so
+    pyproject.toml / uv.lock stay unchanged), then a few things a schema can't say.
     """
-    statuses = {"wheel", "source", "missing", "unknown", "n/a", "bundled"}
+    schema = json.loads(OUTPUT_SCHEMA.read_text(encoding="utf-8"))
+    _check_schema(data, schema, schema)
+    statuses = set(schema["$defs"]["status"]["enum"])
+    assert statuses == {s.value for s in Status}
     assert isinstance(data, dict)
     for key in ("version", "sources", "targets", "packages", "skipped", "ignored", "summary"):
         assert key in data
@@ -1474,3 +1516,37 @@ def test_json_output_matches_schema(capsys, fixtures):
         if "--ignore" in args:
             assert "winonly" in data["ignored"]
             assert all(pkg["name"] != "winonly" for pkg in data["packages"])
+
+
+def test_json_output_with_pyodide_lock_matches_schema(capsys, fixtures, fake_pypi):
+    lock = str(fixtures / "pyodide-lock.json")
+    code, out, _ = run(
+        capsys, "fastlib==2.0.0", "-p", "3.13", "-t", "pyodide,musl-aarch64", "--pyodide-lock", lock, "--json"
+    )
+    data = json.loads(out)
+    _assert_matches_output_schema(data)
+    assert data["packages"][0]["bundled"] == "2.0.0"
+
+
+def test_output_schema_rejects_other_shapes():
+    schema = json.loads(OUTPUT_SCHEMA.read_text(encoding="utf-8"))
+    package = {"name": "x", "version": None, "error": None, "results": {"linux-x86_64": "wheel"}}
+    good = {
+        "version": "1",
+        "sources": [],
+        "targets": [],
+        "packages": [package],
+        "skipped": [],
+        "ignored": [],
+        "summary": {"packages": 1, "with_gaps": 0},
+    }
+    _check_schema(good, schema, schema)
+    for bad in (
+        {k: v for k, v in good.items() if k != "summary"},  # a required key is missing
+        good | {"extra": 1},  # an unknown key
+        good | {"packages": [package | {"results": {"linux-x86_64": "maybe"}}]},  # not a Status
+        good | {"packages": [package | {"bundled": {}}]},  # the bundled version is a string
+        good | {"summary": {"packages": True, "with_gaps": 0}},  # not an integer
+    ):
+        with pytest.raises(AssertionError):
+            _check_schema(bad, schema, schema)
