@@ -7,7 +7,7 @@
 
 [![CI](https://github.com/wheelgap/wheelgap/actions/workflows/ci.yml/badge.svg)](https://github.com/wheelgap/wheelgap/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/wheelgap)](https://pypi.org/project/wheelgap/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/wheelgap/wheelgap/blob/main/LICENSE)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 [![good first issues](https://img.shields.io/github/issues/wheelgap/wheelgap/good%20first%20issue?label=good%20first%20issues&color=7057ff)](https://github.com/wheelgap/wheelgap/labels/good%20first%20issue)
 
@@ -39,7 +39,7 @@ Run either one in a project directory. It finds `uv.lock`, `pylock.toml`, `poetr
 
 ## Usage
 
-See the [recipes](docs/recipes.md) for a free-threading readiness report you can use in scripts.
+See the [recipes](https://github.com/wheelgap/wheelgap/blob/main/docs/recipes.md) for a free-threading readiness report you can use in scripts.
 
 ```bash
 # Will my Alpine ARM image compile anything?
@@ -254,7 +254,7 @@ On Claude Code 2.1.275 or later, `/plugin install wheelgap --marketplace wheelga
 
 **Codex, Cursor, GitHub Copilot and others:** copy [`integrations/claude-code/skills/check-wheels/`](integrations/claude-code/skills/check-wheels/) into your project's `.agents/skills/` folder. For a Cursor project rule instead, copy [`integrations/cursor/wheelgap.mdc`](integrations/cursor/wheelgap.mdc) to `.cursor/rules/`.
 
-Contributing to wheelgap with an agent? See [AGENTS.md](AGENTS.md).
+Contributing to wheelgap with an agent? See [AGENTS.md](https://github.com/wheelgap/wheelgap/blob/main/AGENTS.md).
 
 ## How it works
 
@@ -295,7 +295,7 @@ Contributions are welcome, and pull requests usually get a review within hours.
 - **New here?** Issues labelled [good first issue](https://github.com/wheelgap/wheelgap/labels/good%20first%20issue) say which files to change and what to test.
 - **Done one or two?** [help wanted](https://github.com/wheelgap/wheelgap/labels/help%20wanted) issues are bigger, and a good next step.
 
-[CONTRIBUTING.md](CONTRIBUTING.md) has the 3-command dev setup, or you can start in the browser with no setup:
+[CONTRIBUTING.md](https://github.com/wheelgap/wheelgap/blob/main/CONTRIBUTING.md) has the 3-command dev setup, or you can start in the browser with no setup:
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/wheelgap/wheelgap)
 
@@ -309,4 +309,4 @@ wheelgap is created and maintained by [@patrickballard](https://github.com/patri
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/wheelgap/wheelgap/blob/main/LICENSE)
