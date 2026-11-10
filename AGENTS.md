@@ -59,7 +59,7 @@ uv run --group dev pytest
 ## Picking work and opening a PR
 
 - Issues labelled `good first issue` say which files to change and which tests to add. Do the **first step** an issue describes; the "Later" items are separate PRs.
-- **Check the assignee and existing PRs before you start.** Whoever asks gets an issue assigned for 18 hours, and keeps it by opening a PR (a draft is fine) within that time. An unassigned issue, or one whose 18 hours passed with no PR, goes to the first PR opened for it.
+- **Check the assignee and existing PRs before you start.** Whoever asks gets an issue assigned for 18 hours from the assignment, and keeps it by opening a PR that links the issue (a draft is fine) within that time. While it's held for someone else, pick another issue. An unassigned issue, or one whose 18 hours passed with no PR, goes to the first PR opened for it.
 - In the PR description, use `Closes #N` only if the PR finishes the issue; otherwise write `Part of #N`.
 - The maintainer may push fixes to your branch before merging, so leave "Allow edits by maintainers" on.
 - Say in the PR description which AI tool helped (e.g. "Made with Codex"). The person opening the PR must have read and run the change. One issue per PR.
