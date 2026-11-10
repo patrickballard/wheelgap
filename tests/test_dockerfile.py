@@ -75,14 +75,20 @@ def test_parse_from(line, expected):
         ("--platform=linux/s390x ghcr.io/astral-sh/uv:python3.13-bookworm-slim", "only published for linux/amd64"),
         ("python:3.13-slim-buster", "unknown image variant 'buster'"),
         ("--platform=linux/riscv64 python:3.13-bookworm", r"python:3\.13-bookworm isn't published for linux/riscv64"),
-        ("--platform=linux/riscv64 python:3.13-slim-bookworm", r"isn't published for linux/riscv64 \(trixie is\)"),
+        (
+            "--platform=linux/riscv64 python:3.13-slim-bookworm",
+            r"isn't published for linux/riscv64 \(3\.13-trixie is\)",
+        ),
         ("--platform=linux/s390x python:3.13-bookworm", "isn't published for linux/s390x"),
         ("--platform=linux/s390x python:3.13-slim-bookworm", "isn't published for linux/s390x"),
         ("--platform=linux/ppc64le python:3.13-bullseye", "isn't published for linux/ppc64le"),
-        ("--platform=linux/s390x python:3.8-bullseye", r"isn't published for linux/s390x \(bookworm is\)$"),
-        ("--platform=linux/riscv64 python:3.9-bookworm", r"isn't published for linux/riscv64 \(trixie is\)$"),
+        ("--platform=linux/s390x python:3.8-bullseye", r"isn't published for linux/s390x \(3\.8-bookworm is\)$"),
+        ("--platform=linux/riscv64 python:3.9-bookworm", r"isn't published for linux/riscv64 \(3\.9-trixie is\)$"),
         ("--platform=linux/riscv64 python:3.8-bookworm", "isn't published for linux/riscv64$"),
-        ("--platform=linux/riscv64 python:3.12.7-slim-bookworm", "isn't published for linux/riscv64"),
+        (
+            "--platform=linux/riscv64 python:3.12.7-slim-bookworm",
+            r"isn't published for linux/riscv64 \(3\.12-trixie is\)$",
+        ),
     ],
 )
 def test_parse_from_errors(line, message):

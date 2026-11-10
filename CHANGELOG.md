@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- `--dockerfile` says when an official python image isn't published for the `--platform` asked for, instead of checking a target Docker can't pull: `FROM --platform=linux/riscv64 python:3.13-bookworm` is now an error (`... isn't published for linux/riscv64 (trixie is)`), as are s390x on current `bookworm` tags and ppc64le or s390x on current `bullseye` tags. Patch tags and the end-of-life tags that were still built for those arches are accepted. (#143, thanks [@sarankumar1325](https://github.com/sarankumar1325))
+- `--dockerfile` says when an official python image isn't published for the `--platform` asked for, instead of checking a target Docker can't pull: `FROM --platform=linux/riscv64 python:3.13-bookworm` is now an error (`... isn't published for linux/riscv64 (3.13-trixie is)`), as are s390x on current `bookworm` tags and ppc64le or s390x on current `bullseye` tags. Patch tags and the end-of-life tags that were still built for those arches are accepted. (#143, thanks [@sarankumar1325](https://github.com/sarankumar1325))
 
 ## 0.8.0 (2026-11-10)
 

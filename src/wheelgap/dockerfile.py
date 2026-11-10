@@ -595,9 +595,9 @@ def parse_image(image: str, platform: str | None = None) -> ImageTarget:
             frozen = not _MINOR_TAG_RE.match(tag) or (python, release) in OLD_DEBIAN_TAGS
             if arch not in (OLD_DEBIAN_ARCHES if frozen else DEBIAN_ARCHES[release]):
                 if UNTAGGED_DEBIAN.get(python) == "trixie":
-                    hint = " (trixie is)"
+                    hint = f" ({python}-trixie is)"  # the X.Y tag: a patch tag has no trixie twin
                 elif (python, "bookworm") in OLD_DEBIAN_TAGS and arch in OLD_DEBIAN_ARCHES:
-                    hint = " (bookworm is)"
+                    hint = f" ({python}-bookworm is)"
                 else:
                     hint = ""
                 raise DockerfileError(f"{image} isn't published for {platform}{hint}")
