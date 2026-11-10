@@ -2,7 +2,7 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://github.com/wheelgap/wheelgap/blob/main/docs/wheelgap-output.schema.json",
     "title": "wheelgap --json report",
-    "description": "The object printed by `wheelgap --json` from report_json() in src/wheelgap/cli.py. This schema does not cover `--list-targets --json` or the `{\"error\": ...}` object printed on input errors.",
+    "description": "The object printed by `wheelgap --json` from report_json() in src/wheelgap/cli.py. This schema does not cover `--list-targets --json` or the `{\"error\": ...}` object printed on input errors. It describes the output of the wheelgap version it ships with: later versions may add keys, so a saved copy can reject newer output.",
     "type": "object",
     "additionalProperties": false,
     "required": ["version", "sources", "targets", "packages", "skipped", "ignored", "summary"],
