@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- `--offline` never contacts an index, for CI and coding agents without network: an input that needs a lookup (a requirements file, `Pipfile.lock`, package names, lockfile entries with no file list) exits 2 with an error naming the packages, and the `requires-python` re-check is skipped with a note that those Pythons may show false gaps. It can't be combined with `--online`. (#140, thanks [@sarankumar1325](https://github.com/sarankumar1325))
+- `--offline` never contacts an index, for CI and coding agents without network: an input that needs a lookup (a requirements file, `Pipfile.lock`, package names, lockfile entries with no file list) exits 2 with an error naming the packages (as does a `--pyodide-lock` URL), and the `requires-python` re-check is skipped with a note that those Pythons may show false gaps. It can't be combined with `--online`. (#140, thanks [@sarankumar1325](https://github.com/sarankumar1325))
 
 ## 0.8.0 (2026-11-10)
 

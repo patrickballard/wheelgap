@@ -1080,7 +1080,7 @@ def test_offline_refuses_inputs_that_need_the_index(capsys, fixtures, fake_pypi)
     assert code == 2 and not out
     assert err == (
         "wheelgap: error: --offline: requirements.txt needs the index for 4 packages "
-        "(fastlib, unpinned, winonly, …); use a lockfile or drop --offline\n"
+        "(fastlib, unpinned, winonly, …); use a lockfile that lists each package's files, or drop --offline\n"
     )
     assert fake_pypi == []
 
@@ -1091,7 +1091,8 @@ def test_offline_names_at_most_three_packages(capsys, tmp_path, fake_pypi):
     code, out, err = run(capsys, str(req), "--offline", "-p", "3.13", "--json")
     assert code == 2 and fake_pypi == []
     message = (
-        "--offline: requirements.txt needs the index for 4 packages (a, b, c, …); use a lockfile or drop --offline"
+        "--offline: requirements.txt needs the index for 4 packages (a, b, c, …); "
+        "use a lockfile that lists each package's files, or drop --offline"
     )
     assert json.loads(out)["error"]["message"] == message
 
@@ -1103,7 +1104,14 @@ def test_offline_skips_the_requires_python_recheck(capsys, fake_pypi, tmp_path):
     rows = {p["name"]: p["results"] for p in json.loads(out)["packages"]}
     assert rows["fastlib"] == {"linux-x86_64": "source"}  # only the lock's cp312 wheel, as the note warns
     assert "uv.lock is locked for Python ==3.12.*, so it may be missing wheels for Python 3.13" in err
-    assert "--offline, so its packages weren't looked up on the index and may show false gaps" in err
+    assert "with --offline its packages weren't re-checked on the index, so they may show false gaps" in err
+
+
+def test_offline_refuses_a_pyodide_lock_url(capsys, fixtures, fake_pypi):
+    url = "https://cdn.example.com/pyodide-lock.json"
+    code, out, err = run(capsys, str(fixtures / "uvproj"), "--offline", "--pyodide-lock", url, "-p", "3.13")
+    assert code == 2 and not out and fake_pypi == []
+    assert f"--offline: {url} would be downloaded" in err
 
 
 def test_offline_and_online_are_a_usage_error(capsys, fixtures):

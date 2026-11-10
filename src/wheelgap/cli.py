@@ -595,7 +595,15 @@ def require_offline(sources: list[Source]) -> None:
                 f"{s.label} needs the index for {len(need)} package{'s' if len(need) != 1 else ''} ({names})"
             )
     if problems:
-        raise SourceError(f"--offline: {'; '.join(problems)}; use a lockfile or drop --offline")
+        raise SourceError(
+            f"--offline: {'; '.join(problems)}; use a lockfile that lists each package's files, or drop --offline"
+        )
+
+
+def refuse_pyodide_url(spec: str) -> None:
+    """--offline: a pyodide-lock.json URL would be downloaded, so ask for a local copy instead."""
+    if "://" in spec:
+        raise PyodideLockError(f"--offline: {spec} would be downloaded; save it and pass its path, or drop --offline")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -653,6 +661,8 @@ def main(argv: list[str] | None = None) -> int:
         fail_on = args.fail_on or config.get("fail-on", "source")
         pyodide_lock = None
         if args.pyodide_lock:
+            if args.offline:
+                refuse_pyodide_url(args.pyodide_lock)
             pyodide_lock = load_pyodide_lock(args.pyodide_lock)
             check_targets(pyodide_lock, targets)  # asked for explicitly, so a mismatch is an error
         elif (lock_spec := config.get("pyodide-lock")) and any(PLATFORMS[t.platform][0] == "pyodide" for t in targets):
@@ -660,6 +670,8 @@ def main(argv: list[str] | None = None) -> int:
             # affects `wheelgap -t linux` in the same project. A relative path is relative to pyproject.toml.
             if pyproject and not lock_spec.lower().startswith(("http://", "https://")):
                 lock_spec = str(pyproject.parent / lock_spec)
+            if args.offline:
+                refuse_pyodide_url(lock_spec)
             pyodide_lock = load_pyodide_lock(lock_spec)
             check_targets(pyodide_lock, targets)  # pyodide targets but none for this lock's Python: say so
     except (TargetError, SourceError, DockerfileError, PyodideLockError, OSError) as e:
@@ -682,8 +694,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.offline:  # no re-check, so every locked package may lack wheels for those Pythons
                 print(
                     f"wheelgap: note: {s.label} is locked for Python {s.requires_python}, so it may be missing "
-                    f"wheels for Python {', '.join(outside)}; --offline, so its packages weren't looked up on the "
-                    "index and may show false gaps for those Pythons",
+                    f"wheels for Python {', '.join(outside)}; with --offline its packages weren't re-checked on the "
+                    "index, so they may show false gaps for those Pythons",
                     file=sys.stderr,
                 )
                 continue
