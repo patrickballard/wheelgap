@@ -302,6 +302,19 @@ def test_pipfile_lock_private_index_is_skipped(tmp_path):
     ]
 
 
+def test_pipfile_lock_private_index_in_one_category_skips_the_package(tmp_path):
+    # Pipenv writes "index" on direct dependencies: the same package can be direct in develop, transitive in default.
+    path = tmp_path / "Pipfile.lock"
+    lock = {
+        "_meta": {"sources": [{"name": "internal", "url": "https://pkgs.example.com/simple"}]},
+        "default": {"acme-utils": {"version": "==2.1.0"}},
+        "develop": {"acme-utils": {"version": "==2.1.0", "index": "internal"}},
+    }
+    path.write_text(json.dumps(lock), encoding="utf-8")
+    (src,) = load_inputs([str(path)])
+    assert [(p.name, p.skip) for p in src.packages] == [("acme-utils", "private index")]
+
+
 def test_pipfile_lock_malformed_package_entry_raises(tmp_path):
     path = tmp_path / "Pipfile.lock"
     lock = {"default": {"requests": "==2.31.0"}}

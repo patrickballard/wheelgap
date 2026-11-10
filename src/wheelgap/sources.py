@@ -344,7 +344,10 @@ def _add_once(pkgs: list[Package], seen: dict[tuple[str, str | None], Package], 
     if first is None:
         seen[key] = pkg
         pkgs.append(pkg)
-    elif first.markers is not None:
+        return
+    if pkg.skip == "private index":
+        first.skip = pkg.skip  # Pipenv may pin the index in one category only: keep the name off pypi.org anyway
+    if first.markers is not None:
         first.markers = None if pkg.markers is None else first.markers + pkg.markers
 
 
