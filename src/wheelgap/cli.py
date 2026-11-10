@@ -168,6 +168,11 @@ def make_parser() -> argparse.ArgumentParser:
         help="print a Markdown report (e.g. for $GITHUB_STEP_SUMMARY) instead of a table",
     )
     p.add_argument(
+        "--junit",
+        metavar="PATH",
+        help="also write a JUnit XML report to PATH, alongside the usual output",
+    )
+    p.add_argument(
         "--ignore",
         action="append",
         default=[],
@@ -881,6 +886,15 @@ def main(argv: list[str] | None = None) -> int:
     # With --fail-on missing, source builds are accepted; missing and unknown packages still fail.
     failing = gaps if fail_on == "source" else [r for r in gaps if r.fails_install]
     code = 0 if args.exit_zero or not failing else 1
+
+    if args.junit:
+        from wheelgap.junit import write_junit
+
+        try:
+            write_junit(args.junit, rows, targets, fail_on)
+        except OSError as e:
+            print(f"wheelgap: error: {e}", file=sys.stderr)
+            return 2
 
     if args.json:
         print(report_json(rows, targets, source_labels, skipped, ignored, args.explain, pyodide_lock))
