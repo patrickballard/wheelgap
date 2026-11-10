@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `--dockerfile` says when an official python image isn't published for the `--platform` asked for, instead of checking a target Docker can't pull: `FROM --platform=linux/riscv64 python:3.13-bookworm` is now an error (`... isn't published for linux/riscv64 (trixie is)`), as are s390x on current `bookworm` tags and ppc64le or s390x on current `bullseye` tags. Patch tags and the end-of-life tags that were still built for those arches are accepted. (#143, thanks [@sarankumar1325](https://github.com/sarankumar1325))
+
 ## 0.8.0 (2026-11-10)
 
 Name the distro you deploy to: `--distro ubuntu-22.04` (or `distro = "..."` in `[tool.wheelgap]`) sets the glibc or musl version for Ubuntu, Debian, RHEL, Rocky, Alma, Amazon Linux and Alpine. `--dockerfile` now gets the glibc right for `python:3.13` and `python:3.13-slim`, whose tags name no Debian release. Packages from a private index are no longer looked up on public PyPI, either in `Pipfile.lock` or under `--online`. With `--json`, input errors are also printed as JSON on stdout. Also new: the [check-wheels skill](https://github.com/wheelgap/wheelgap/tree/main/integrations) for coding agents (Claude Code plugin, Agent Skills and a Cursor rule).
