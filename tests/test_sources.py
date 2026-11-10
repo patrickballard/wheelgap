@@ -274,6 +274,7 @@ def _two_source_pipfile_lock(tmp_path):
                 {"name": "pypi", "url": "https://pypi.org/simple", "verify_ssl": True},
                 {"name": "legacy", "url": "https://pypi.python.org/simple", "verify_ssl": True},
                 {"name": "internal", "url": "https://pkgs.example.com/simple", "verify_ssl": True},
+                {"name": "broken", "url": "https://[bad/simple", "verify_ssl": True},
             ]
         },
         "default": {
@@ -282,6 +283,7 @@ def _two_source_pipfile_lock(tmp_path):
             "six": {"version": "==1.16.0", "index": "legacy"},
             "fastlib": {"version": "==2.0.0"},
             "ghost": {"version": "==1.0.0", "index": "not-in-meta"},
+            "oddball": {"version": "==1.0.0", "index": "broken"},
         },
     }
     path.write_text(json.dumps(lock), encoding="utf-8")
@@ -296,6 +298,7 @@ def test_pipfile_lock_private_index_is_skipped(tmp_path):
         ("six", None),
         ("fastlib", None),
         ("ghost", "private index"),  # an index the lock doesn't describe: can't tell it's PyPI
+        ("oddball", "private index"),  # a URL urlparse rejects: skipped, not a crash
     ]
 
 

@@ -422,7 +422,10 @@ def parse_pipfile_lock(path: Path) -> Source:
 
 
 def _is_public_pypi(url: str | None) -> bool:
-    return url is not None and urlparse(url).hostname in ("pypi.org", "pypi.python.org")
+    try:
+        return url is not None and urlparse(url).hostname in ("pypi.org", "pypi.python.org")
+    except ValueError:  # e.g. "https://[bad/simple": not something we can call PyPI
+        return False
 
 
 def _pinned_version(req: Requirement) -> str | None:
