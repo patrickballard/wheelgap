@@ -549,6 +549,12 @@ def render_markdown(
     return out
 
 
+def input_error_json(e: Exception) -> int:
+    """With --json, also put an input error on stdout so scripts don't have to parse stderr."""
+    print(json.dumps({"error": {"message": str(e), "type": type(e).__name__}}))
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         # Don't crash printing ✓ to a non-UTF-8 pipe (e.g. Windows cp1252).
@@ -610,10 +616,10 @@ def main(argv: list[str] | None = None) -> int:
             check_targets(pyodide_lock, targets)  # pyodide targets but none for this lock's Python: say so
     except (TargetError, SourceError, DockerfileError, PyodideLockError, OSError) as e:
         print(f"wheelgap: error: {e}", file=sys.stderr)
-        return 2
+        return input_error_json(e) if args.json else 2
     except Exception as e:  # malformed TOML and friends
         print(f"wheelgap: error: {type(e).__name__}: {e}", file=sys.stderr)
-        return 2
+        return input_error_json(e) if args.json else 2
 
     packages = [p for s in sources for p in s.packages]
     other_index = fill_all(packages, refresh=args.online)

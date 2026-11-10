@@ -109,6 +109,8 @@ data = json.load(open("wheelgap.json"))
 key = next(t["label"] for t in data["targets"] if t["python"] == "3.13" and t["platform"] == "linux-x86_64")
 ```
 
+If an input can't be read (a missing lockfile, an unknown target, a bad `[tool.wheelgap]` value), `--json` prints `{"error": {"message": "...", "type": "TargetError"}}` on stdout instead of results, next to the usual `wheelgap: error:` line on stderr and exit code 2. Command-line usage errors from argparse are still plain text on stderr.
+
 ```
 uvloop 0.21.0 on win-arm64: ● source
   via: myapp → uvicorn → uvloop
