@@ -18,8 +18,8 @@ def _cell_fails(status: Status, fail_on: str) -> bool:
     return False
 
 
-def _rank(case: tuple[str | None, str | None]) -> int:
-    fail, skip = case
+def _rank(cell: tuple[str | None, str | None]) -> int:
+    fail, skip = cell
     return 2 if fail is not None else 0 if skip is not None else 1
 
 
@@ -51,14 +51,14 @@ def junit_xml(rows: list[Row], targets: list[Target], fail_on: str) -> str:
             if len(versions[row.package.key]) > 1:
                 name = f"{name} {row.package.version}"
             if status is Status.NOT_NEEDED:
-                case: tuple[str | None, str | None] = (None, "n/a")
+                cell: tuple[str | None, str | None] = (None, "n/a")
             elif _cell_fails(status, fail_on):
-                case = (status.value, None)
+                cell = (status.value, None)
             else:
-                case = (None, None)
+                cell = (None, None)
             # The worst cell wins: a failure, then a pass, then skipped.
-            if name not in merged or _rank(case) > _rank(merged[name]):
-                merged[name] = case
+            if name not in merged or _rank(cell) > _rank(merged[name]):
+                merged[name] = cell
         cases = [(name, fail, skip) for name, (fail, skip) in merged.items()]
         failures = sum(1 for _, fail, _ in cases if fail is not None)
         skipped = sum(1 for _, _, skip in cases if skip is not None)
