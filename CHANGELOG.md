@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `Pipfile.lock` packages pinned to a private index (an `index` whose source URL isn't on pypi.org, or isn't listed in `_meta.sources`) are listed as skipped instead of being looked up on public PyPI, so internal package names aren't sent to pypi.org. (#136, thanks [@sarankumar1325](https://github.com/sarankumar1325))
 - `--online` no longer looks up packages from a private index on public PyPI: only packages whose lockfile index is PyPI are re-checked, the rest keep their locked files, and a note says how many. `poetry.lock` packages now record their source index too. (#133, thanks [@Niranjan-cyber](https://github.com/Niranjan-cyber))
 
 ## 0.7.0 (2026-11-09)
