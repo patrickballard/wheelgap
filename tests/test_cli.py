@@ -346,6 +346,9 @@ def test_json_reports_input_errors_on_stdout(capsys, fixtures, tmp_path):
     assert error["type"] == "TOMLDecodeError"
     assert plain_out(str(tmp_path)) == ""
 
+    error = json_error("--list-targets", "--glibc", "bad")  # --list-targets --json normally prints a list
+    assert error["type"] == "TargetError" and "glibc" in error["message"]
+
 
 def test_running_python_reports_freethreaded(monkeypatch):
     monkeypatch.setattr(sysconfig, "get_config_var", lambda name: 1 if name == "Py_GIL_DISABLED" else None)
