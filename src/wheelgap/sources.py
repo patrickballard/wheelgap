@@ -563,6 +563,16 @@ def parse_pyproject(path: Path) -> Source:
             f"{path}: [project] dependencies is dynamic (set by the build backend), so wheelgap can't read it; "
             "check a lockfile instead"
         )
+    if "dependencies" not in project:
+        # Poetry 2 builds [tool.poetry.dependencies] into the package when [project] has no dependencies.
+        tool = data.get("tool")
+        poetry = tool.get("poetry") if isinstance(tool, dict) else None
+        poetry_deps = poetry.get("dependencies") if isinstance(poetry, dict) else None
+        if isinstance(poetry_deps, dict) and any(dep.lower() != "python" for dep in poetry_deps):
+            raise SourceError(
+                f"{path}: the dependencies are in [tool.poetry.dependencies], not [project] dependencies, "
+                "so wheelgap can't read them; check poetry.lock instead"
+            )
     dependencies = project.get("dependencies", [])
     if not isinstance(dependencies, list) or not all(isinstance(d, str) for d in dependencies):
         raise SourceError(f"{path}: [project] dependencies must be a list of strings")
@@ -571,13 +581,27 @@ def parse_pyproject(path: Path) -> Source:
         isinstance(v, list) and all(isinstance(d, str) for d in v) for v in optional.values()
     ):
         raise SourceError(f"{path}: [project] optional-dependencies must be a table of lists of strings")
-    pkgs = [requirement_to_package(d, path.name) for d in dependencies]
-    extras: dict[str, list[str]] = {canonicalize_name(name): list(lines) for name, lines in optional.items()}
-    source = Source(
-        path.name, pkgs, pyproject_extras=extras, pyproject_dynamic_extras="optional-dependencies" in dynamic
-    )
+    extras: dict[str, list[str]] = {}
+    for extra_name, lines in optional.items():
+        key = canonicalize_name(extra_name)
+        if key in extras:
+            raise SourceError(
+                f"{path}: [project] optional-dependencies has two extras that are both {key!r} once normalized "
+                "(PEP 685)"
+            )
+        extras[key] = list(lines)
+    source = Source(path.name, pyproject_extras=extras, pyproject_dynamic_extras="optional-dependencies" in dynamic)
     if isinstance(name := project.get("name"), str):
         source.pyproject_name = canonicalize_name(name)
+    self_extras: list[str] = []
+    for line in dependencies:
+        pkg = requirement_to_package(line, path.name)
+        if pkg.key != source.pyproject_name:
+            source.packages.append(pkg)
+            continue
+        # `myproject[extra]` in its own dependencies: installing the project installs that extra too.
+        self_extras.extend(_self_reference_extras(source, line, Requirement(line)))
+    _add_extras(source, self_extras)
     return source
 
 
@@ -588,16 +612,38 @@ def select_pyproject_extras(source: Source, extras: Iterable[str], all_extras: b
     if available is None:
         return
     wanted = list(available) if all_extras else [canonicalize_name(e) for e in extras]
-    if not wanted:
-        return
-    if source.pyproject_dynamic_extras:
+    if source.pyproject_dynamic_extras and (all_extras or wanted):
         raise SourceError(
             f"{source.label}: [project] optional-dependencies is dynamic (set by the build backend), "
             "so its extras can't be read"
         )
     if unknown := sorted(set(wanted) - set(available)):
         raise SourceError(f"{source.label}: unknown extras: {', '.join(unknown)}")
-    own_name = source.pyproject_name
+    _add_extras(source, wanted)
+
+
+def _self_reference_extras(source: Source, line: str, req: Requirement) -> list[str]:
+    """The extras that `myproject[extra]`, a requirement on the project itself, pulls in."""
+    if req.marker or req.url or req.specifier:
+        raise SourceError(
+            f"{source.label}: {line!r} refers to the project itself with a marker, URL or version, "
+            "which isn't supported"
+        )
+    wanted = [canonicalize_name(e) for e in req.extras]
+    if wanted and source.pyproject_dynamic_extras:
+        raise SourceError(
+            f"{source.label}: {line!r} names extras, but [project] optional-dependencies is dynamic "
+            "(set by the build backend), so its extras can't be read"
+        )
+    missing = sorted(set(wanted) - set(source.pyproject_extras or {}))
+    if missing:
+        raise SourceError(f"{source.label}: {line!r} names unknown extras: {', '.join(missing)}")
+    return wanted
+
+
+def _add_extras(source: Source, wanted: list[str]) -> None:
+    """Add each wanted extra's requirements, following self-references, and each identical requirement once."""
+    available = source.pyproject_extras or {}
     seen: set[str] = set()
     while wanted:
         extra = wanted.pop(0)
@@ -609,18 +655,12 @@ def select_pyproject_extras(source: Source, extras: Iterable[str], all_extras: b
                 req = Requirement(line)
             except InvalidRequirement as e:
                 raise SourceError(f"{source.label}: can't parse requirement {line!r}: {e}") from None
-            if own_name is not None and canonicalize_name(req.name) == own_name:
-                if req.marker or req.url or req.specifier:
-                    raise SourceError(
-                        f"{source.label}: {line!r} refers to the project itself with a marker, URL or version, "
-                        "which isn't supported"
-                    )
-                missing = sorted({canonicalize_name(e) for e in req.extras} - set(available))
-                if missing:
-                    raise SourceError(f"{source.label}: {line!r} names unknown extras: {', '.join(missing)}")
-                wanted.extend(canonicalize_name(e) for e in req.extras)
+            if source.pyproject_name is not None and canonicalize_name(req.name) == source.pyproject_name:
+                wanted.extend(_self_reference_extras(source, line, req))
                 continue
-            source.packages.append(requirement_to_package(line, source.label))
+            pkg = requirement_to_package(line, source.label)
+            if pkg not in source.packages:  # also in another extra or in dependencies: one row
+                source.packages.append(pkg)
 
 
 def requirement_to_package(text: str, origin: str) -> Package:

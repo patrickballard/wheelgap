@@ -785,6 +785,14 @@ def test_pyproject_unknown_extra(tmp_path):
         ('[project]\nname = "x"\ndependencies = "numpy"\n', "must be a list of strings"),
         ('[project]\nname = "x"\ndependencies = ["numpy>=="]\n', "can't parse requirement"),
         ("[project\n", "invalid TOML"),
+        (
+            '[project]\nname = "x"\n\n[tool.poetry.dependencies]\npython = ">=3.10"\nnumpy = "^2"\n',
+            "dependencies are in \\[tool.poetry.dependencies\\].*check poetry.lock",
+        ),
+        ('[project]\nname = "x"\n[project.optional-dependencies]\nTest = ["a"]\ntest = ["b"]\n', "PEP 685"),
+        ('[project]\nname = "x"\ndependencies = ["x[nope]"]\n', "names unknown extras: nope"),
+        ('[project]\nname = "x"\ndependencies = ["x[a]"]\ndynamic = ["optional-dependencies"]\n', "is dynamic"),
+        ('[project]\nname = "x"\ndependencies = ["x[a]; os_name == \'nt\'"]\n', "refers to the project itself"),
     ],
 )
 def test_pyproject_input_errors(tmp_path, text, error):
@@ -801,6 +809,44 @@ def test_pyproject_dynamic_optional_dependencies_with_extra(tmp_path):
     select_pyproject_extras(source, [], False)  # no extra asked for: fine
     with pytest.raises(SourceError, match="optional-dependencies is dynamic"):
         select_pyproject_extras(source, ["test"], False)
+    with pytest.raises(SourceError, match="optional-dependencies is dynamic"):
+        select_pyproject_extras(source, [], True)  # --all-extras can't mean "none"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '[project]\nname = "x"\n\n[tool.poetry.dependencies]\npython = ">=3.10"\n',  # python isn't a dependency
+        '[project]\nname = "x"\ndependencies = ["purewheel"]\n\n[tool.poetry.dependencies]\nnumpy = "^2"\n',
+    ],
+)
+def test_pyproject_reads_project_dependencies_alongside_tool_poetry(tmp_path, text):
+    path = tmp_path / "pyproject.toml"
+    path.write_text(text, encoding="utf-8")
+    (source,) = load_inputs([str(path)])
+    assert [p.name for p in source.packages] == (["purewheel"] if "purewheel" in text else [])
+
+
+def test_pyproject_extras_add_each_requirement_once(tmp_path):
+    path = tmp_path / "pyproject.toml"
+    path.write_text(
+        '[project]\nname = "x"\ndependencies = ["numpy>=2"]\n\n[project.optional-dependencies]\n'
+        'plot = ["matplotlib"]\nall = ["matplotlib", "scipy", "numpy >= 2"]\n',
+        encoding="utf-8",
+    )
+    (source,) = load_inputs([str(path)])
+    select_pyproject_extras(source, [], True)
+    assert sorted(p.name for p in source.packages) == ["matplotlib", "numpy", "scipy"]
+
+
+def test_pyproject_self_reference_in_dependencies_adds_the_extra(tmp_path):
+    path = tmp_path / "pyproject.toml"
+    path.write_text(PYPROJECT.replace('"fastlib==2.0.0", ', '"fastlib==2.0.0", "my-lib[test]", '), encoding="utf-8")
+    (source,) = load_inputs([str(path)])
+    # my-lib[test] pulls in test, and test's my-lib[fast] pulls in fast; my-lib itself is never looked up
+    assert sorted(p.name for p in source.packages) == ["fastlib", "nowheels", "purewheel", "ranged", "winonly"]
+    select_pyproject_extras(source, ["test"], False)  # asking for it again adds nothing twice
+    assert sorted(p.name for p in source.packages) == ["fastlib", "nowheels", "purewheel", "ranged", "winonly"]
 
 
 def test_no_lockfile_suggests_pyproject(tmp_path):

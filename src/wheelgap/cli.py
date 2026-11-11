@@ -996,7 +996,8 @@ def main(argv: list[str] | None = None) -> int:
         if source.pyproject_extras is not None:  # always: this answer differs from a lockfile's
             print(
                 f"wheelgap: note: {source.label} lists direct dependencies only; "
-                "their own dependencies aren't checked (use a lockfile for that)",
+                "their own dependencies aren't checked (use a lockfile for that), and ranges were checked at "
+                "the newest matching release",
                 file=sys.stderr,
             )
 
