@@ -14,9 +14,7 @@ from pathlib import Path
 
 import packaging
 from packaging.markers import InvalidMarker, Marker
-from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
-from packaging.version import InvalidVersion, Version
 
 from . import __version__
 from .api import running_python
@@ -24,7 +22,14 @@ from .check import CELL, Row, Status, check, explain, has_sdist, marker_holds, r
 from .dockerfile import DockerfileError, read_dockerfile
 from .junit import write_junit
 from .offline import require_offline, undo_offline
-from .pyodide import PyodideLock, PyodideLockError, apply_bundled, check_targets, load_pyodide_lock
+from .pyodide import (
+    PyodideLock,
+    PyodideLockError,
+    apply_bundled,
+    bundled_version_differs,
+    check_targets,
+    load_pyodide_lock,
+)
 from .pypi import check_index_url, fill_all, keeps_locked_files, recheck_lock, split_credentials
 from .sources import (
     Package,
@@ -169,6 +174,11 @@ def make_parser() -> argparse.ArgumentParser:
         "--online", action="store_true", help="re-check lockfile packages against PyPI instead of trusting the lockfile"
     )
     p.add_argument("--offline", action="store_true", help="never contact an index; fail if an input needs one")
+    p.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="don't read or save the 24-hour cache of pinned package lookups",
+    )
     p.add_argument("--all", action="store_true", help="show every package, not just the ones with gaps")
     p.add_argument("--explain", action="store_true", help="for each gap, list the wheels that were rejected and why")
     p.add_argument(
@@ -418,27 +428,10 @@ def render_explain(rows: list[Row], targets: list[Target], style: Style) -> list
     return out
 
 
-def bundled_version_differs(r: Row, lock: PyodideLock) -> bool:
-    """Pyodide ships a version the input doesn't allow: micropip.install of that requirement would fail.
-
-    A pin is compared as a version (0.9 == 0.9.0), a range by whether it contains Pyodide's version, and a
-    requirement with neither (the index picked the newest release) never differs.
-    """
-    pkg, have = r.package, lock.packages[r.package.key]
-    if pkg.version_from_index:
-        return pkg.spec is not None and not SpecifierSet(pkg.spec).contains(have, prereleases=True)
-    if not pkg.version:
-        return False
-    try:
-        return Version(pkg.version) != Version(have)
-    except InvalidVersion:
-        return pkg.version != have
-
-
 def bundled_line(rows: list[Row], lock: PyodideLock) -> str:
     def one(r: Row) -> str:
         have, pkg = lock.packages[r.package.key], r.package
-        if not bundled_version_differs(r, lock):
+        if not bundled_version_differs(r.package, lock):
             return f"{pkg.name} {have}"
         return f"{pkg.name} {have} " + (
             f"(outside {pkg.spec})" if pkg.version_from_index else f"(you pinned {pkg.version})"
@@ -469,7 +462,7 @@ def report_json(
         }
         if pyodide_lock and Status.BUNDLED in r.results.values():
             out["bundled"] = pyodide_lock.packages[r.package.key]
-            out["bundled_version_differs"] = bundled_version_differs(r, pyodide_lock)
+            out["bundled_version_differs"] = bundled_version_differs(r.package, pyodide_lock)
         if explained:
             out["rejected"] = {
                 t.label(multi_py): [{"file": f, "reason": why} for f, why in explain(r.package.files or [], t)]
@@ -487,7 +480,7 @@ def report_json(
             "packages": [package(r) for r in rows],
             "skipped": [{"name": p.name, "reason": p.skip} for p in skipped],
             "ignored": ignored,
-            "summary": {"packages": len(rows), "with_gaps": len(gaps)},
+            "summary": {"packages": len(rows), "with_gaps": len(gaps), "per_target": target_counts(gaps, targets)},
         },
         indent=2,
     )
@@ -588,26 +581,43 @@ def gap_summary(gaps: list[Row], total: int, style: Style) -> str:
     return f"{style.bold(f'{len(gaps)} of {total} {noun}')} {verb} gaps: " + ", ".join(parts) + "."
 
 
-def target_lines(gaps: list[Row], targets: list[Target], style: Style) -> list[str]:
-    if len(targets) < 2:
-        return []
+def target_counts(gaps: list[Row], targets: list[Target]) -> dict[str, dict[str, int]]:
+    """Gap counts for every target (zeros included), keyed by target label. This is --json's summary.per_target.
 
+    Text and --markdown show a subset of it (shown_target_counts), so the three formats can't disagree.
+    """
     multi_py = len({target.python for target in targets}) > 1
-    lines = []
+    out = {}
     for target in targets:
         statuses = [row.results[target] for row in gaps]
-        parts = []
-        if source := statuses.count(Status.SOURCE):
-            parts.append(style.yellow(f"{source} from source"))
-        if missing := statuses.count(Status.MISSING):
-            parts.append(style.red(f"{missing} missing"))
-        if unknown := statuses.count(Status.UNKNOWN):
-            parts.append(style.dim(f"{unknown} unknown"))
-        if parts:
-            lines.append((target.label(multi_py), ", ".join(parts)))
+        out[target.label(multi_py)] = {
+            s.value: statuses.count(s) for s in (Status.SOURCE, Status.MISSING, Status.UNKNOWN)
+        }
+    return out
 
-    width = max((len(label) for label, _ in lines), default=0)
-    return [f"{label:<{width}}  {counts}" for label, counts in lines]
+
+def shown_target_counts(gaps: list[Row], targets: list[Target]) -> dict[str, dict[str, int]]:
+    """The targets the text and Markdown summaries list: those with gaps, and none for a single target."""
+    if len(targets) < 2:
+        return {}
+    return {label: counts for label, counts in target_counts(gaps, targets).items() if any(counts.values())}
+
+
+def target_counts_text(counts: dict[str, int], style: Style) -> str:
+    parts = []
+    if source := counts["source"]:
+        parts.append(style.yellow(f"{source} from source"))
+    if missing := counts["missing"]:
+        parts.append(style.red(f"{missing} missing"))
+    if unknown := counts["unknown"]:
+        parts.append(style.dim(f"{unknown} unknown"))
+    return ", ".join(parts)
+
+
+def target_lines(gaps: list[Row], targets: list[Target], style: Style) -> list[str]:
+    per_target = shown_target_counts(gaps, targets)
+    width = max(map(len, per_target), default=0)
+    return [f"{label:<{width}}  {target_counts_text(counts, style)}" for label, counts in per_target.items()]
 
 
 _MD_SPECIAL = re.compile(r"([\\`*_\[\]<>#|~&])")
@@ -669,6 +679,10 @@ def render_markdown(
             out += [f"{hidden} {noun} with wheels for every target hidden (`--all` to show).", ""]
 
     if gaps:
+        per_target = shown_target_counts(gaps, targets)
+        if per_target:
+            out += [f"- {_md(label)}: {target_counts_text(counts, plain)}" for label, counts in per_target.items()]
+            out.append("")
         out += [gap_summary(gaps, len(rows), plain), ""]
         if source_allowed:
             out += ["Source builds are allowed (fail-on missing), so this run passes.", ""]
@@ -876,7 +890,11 @@ def main(argv: list[str] | None = None) -> int:
                     f"workspace members outside it aren't checked: {', '.join(unchecked)}",
                     file=sys.stderr,
                 )
-    other_index = fill_all(packages, refresh=args.online, python=single_python(targets), simple_index=index_url)
+    # --online asks the index again but saves the answer, so a plain run afterwards doesn't go back to an older one.
+    cached = {"read_cache": not (args.no_cache or args.online), "write_cache": not args.no_cache}
+    other_index = fill_all(
+        packages, refresh=args.online, python=single_python(targets), simple_index=index_url, **cached
+    )
     if args.online and other_index and not quiet:
         print(
             f"wheelgap: note: --online looks up PyPI packages only; kept the locked files of {other_index} "
@@ -899,7 +917,7 @@ def main(argv: list[str] | None = None) -> int:
                 if not other:
                     continue
             else:
-                other, failed = recheck_lock(needed, simple_index=index_url)
+                other, failed = recheck_lock(needed, simple_index=index_url, **cached)
             note = (
                 f"wheelgap: note: {s.label} is locked for Python {s.requires_python}, so it may be missing "
                 f"wheels for Python {', '.join(outside)}; looked its PyPI packages up on the index too"
@@ -962,7 +980,9 @@ def main(argv: list[str] | None = None) -> int:
             print(style.dim("ignored: " + ", ".join(ignored)))
         if pyodide_lock:  # a bundled build of another version passes, but quiet mode mustn't hide that (#75)
             differs = [
-                r for r in rows if Status.BUNDLED in r.results.values() and bundled_version_differs(r, pyodide_lock)
+                r
+                for r in rows
+                if Status.BUNDLED in r.results.values() and bundled_version_differs(r.package, pyodide_lock)
             ]
             if differs:
                 print(style.dim(bundled_line(differs, pyodide_lock)))
