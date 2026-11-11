@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -207,6 +208,10 @@ def resolve_platform(name: str) -> str:
     try:
         return _LOOKUP[_norm(name)]
     except KeyError:
+        matches = difflib.get_close_matches(name, [*PLATFORMS, *ALIASES], n=1)
+        if matches:
+            suggestion = ALIASES.get(matches[0], matches[0])
+            raise TargetError(f"unknown target {name!r}; did you mean {suggestion!r}?") from None
         known = ", ".join(PLATFORMS)
         raise TargetError(f"unknown target {name!r} (known: {known})") from None
 

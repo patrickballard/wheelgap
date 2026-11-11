@@ -102,6 +102,18 @@ def test_unknown_platform():
         resolve_platform("solaris")
 
 
+def test_unknown_platform_suggests_a_close_name():
+    with pytest.raises(TargetError, match=r"unknown target 'linux-aarch46'; did you mean 'linux-aarch64'\?") as caught:
+        resolve_platform("linux-aarch46")
+    assert "known:" not in str(caught.value)
+
+
+def test_unknown_platform_without_a_close_name():
+    with pytest.raises(TargetError, match=r"unknown target 'banana' \(known:") as caught:
+        resolve_platform("banana")
+    assert "did you mean" not in str(caught.value)
+
+
 def test_manylinux_includes_legacy_aliases():
     plats = manylinux_platforms("x86_64", (2, 28))
     assert plats[0] == "manylinux_2_28_x86_64"
