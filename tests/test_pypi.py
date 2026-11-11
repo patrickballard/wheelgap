@@ -316,6 +316,7 @@ MIRROR = "https://mirror.example.com/simple"
         (MIRROR, "https://pypi.org/pypi", None, False),
         (MIRROR, "https://mirror.example.com/pypi", None, True),
         (MIRROR, "https://mirror.example.com/pypi/", None, True),
+        ("https://mirror.example.com/simple/", "https://mirror.example.com/pypi", None, True),
         (MIRROR, "https://Mirror.Example.COM:443/pypi", None, True),  # hostnames ignore case; 443 is https's port
         ("https://MIRROR.example.com:443/simple", "https://mirror.example.com/pypi", None, True),
         ("https://user:tok@mirror.example.com/simple", "https://mirror.example.com/pypi", None, True),
@@ -329,6 +330,27 @@ MIRROR = "https://mirror.example.com/simple"
         ("https://mirror.example.com:99999/simple", "https://mirror.example.com/pypi", None, False),
         ("https://[bad/simple", "https://mirror.example.com/pypi", None, False),
         ("/simple", "https://mirror.example.com/pypi", None, False),
+        # One host, many repositories (Artifactory, Nexus): only the same repository matches.
+        (
+            "https://artifactory.example/api/pypi/pypi-remote/simple",
+            "https://artifactory.example/api/pypi/pypi-remote/pypi",
+            None,
+            True,
+        ),
+        (
+            "https://artifactory.example/api/pypi/internal/simple",
+            "https://artifactory.example/api/pypi/pypi-remote/pypi",
+            None,
+            False,
+        ),
+        ("https://mirror.example.com/Repo/simple", "https://mirror.example.com/repo/pypi", None, False),
+        ("https://devpi.example/root/pypi/+simple/", "https://devpi.example/root/pypi/pypi", None, True),
+        ("https://devpi.example/team/dev/+simple/", "https://devpi.example/root/pypi/pypi", None, False),
+        # Not plainly <repo>/simple and <repo>/pypi: no match.
+        ("https://mirror.example.com/", "https://mirror.example.com/pypi", None, False),
+        ("https://mirror.example.com/simple?x=1", "https://mirror.example.com/pypi", None, False),
+        (MIRROR, "https://mirror.example.com/json", None, False),
+        (MIRROR, "https://mirror.example.com", None, False),
     ],
 )
 def test_may_look_up(monkeypatch, registry, index, simple_index, expected):

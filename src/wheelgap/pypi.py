@@ -352,27 +352,34 @@ def is_pypi(registry: str | None) -> bool:
     return (registry or PYPI_SIMPLE).rstrip("/") == PYPI_SIMPLE
 
 
-def _host(url: str) -> tuple[str, int | None] | None:
-    """A URL's hostname (lowercase) and port, the default one filled in. Never its user or password."""
+def _index(url: str, suffixes: tuple[str, ...]) -> tuple[str, str, int | None, str] | None:
+    """(scheme, hostname, port, repository path) of an index URL ending in one of `suffixes`, the default port
+    filled in. One host can serve many repositories (Artifactory, Nexus, devpi), so the path counts. Never the
+    user or password. None for anything that isn't plainly such a URL: it matches nothing."""
     try:
         parts = urlsplit(url)
         port = parts.port or {"https": 443, "http": 80}.get(parts.scheme)
-    except ValueError:  # a malformed host or port: matches nothing
+    except ValueError:  # a malformed host or port
         return None
-    return (parts.hostname, port) if parts.hostname else None
+    path = parts.path.rstrip("/")
+    suffix = next((s for s in suffixes if path.endswith(s)), None)
+    if not parts.hostname or suffix is None or parts.query or parts.fragment:
+        return None
+    return parts.scheme, parts.hostname, port, path.removesuffix(suffix).rstrip("/")
 
 
 def may_look_up(registry: str | None, simple_index: str | None = None) -> bool:
     """Whether a package pinned to `registry` may be looked up by name: it comes from PyPI, or, for lookups on the
-    JSON API (no `simple_index`), from the host WHEELGAP_INDEX_URL points at, such as a PyPI mirror. Either way its
-    name only goes where the lock says it came from. Unset, WHEELGAP_INDEX_URL is PyPI and only is_pypi() counts."""
+    JSON API (no `simple_index`), from the index WHEELGAP_INDEX_URL points at, such as a PyPI mirror: the same
+    scheme, host, port and repository path (`<repo>/simple` and `<repo>/pypi`). Either way its name only goes to the
+    index the lock says it came from. Unset, WHEELGAP_INDEX_URL is PyPI and only is_pypi() counts."""
     if is_pypi(registry):
         return True
     base = index_url()
     if registry is None or simple_index is not None or base == DEFAULT_INDEX:
         return False
-    host = _host(registry)
-    return host is not None and host == _host(base)
+    index = _index(registry, ("/simple", "/+simple"))  # devpi serves /<user>/<index>/+simple
+    return index is not None and index == _index(base, ("/pypi",))
 
 
 def keeps_locked_files(p: Package) -> bool:
@@ -409,7 +416,7 @@ def fill_all(
 ) -> int:
     """Look packages up on PyPI. A package the lock says came from another index is never looked up: PyPI doesn't
     know it. With refresh (--online) it keeps its locked files; with no files (an old poetry.lock, a Pipfile.lock)
-    it is skipped as a private index, unless WHEELGAP_INDEX_URL is on its index's host (see may_look_up).
+    it is skipped as a private index, unless WHEELGAP_INDEX_URL is that same index (see may_look_up).
     `python` limits range resolution to releases supporting that interpreter.
     With `simple_index` (--index-url), lookups go to that PEP 691 simple index instead of PyPI's JSON API.
     Returns how many kept their locked files for that reason."""

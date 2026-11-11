@@ -519,7 +519,7 @@ def parse_pipfile_lock(path: Path) -> Source:
                 if url is None:  # an index the lock doesn't describe: no way to tell where the name may go
                     pkg.skip = "private index"
                 elif not _is_public_pypi(url):
-                    pkg.registry = url  # pypi.fill_all skips it, unless WHEELGAP_INDEX_URL is on the same host
+                    pkg.registry = url  # pypi.fill_all skips it, unless WHEELGAP_INDEX_URL is that index
             _add_once(pkgs, seen, pkg)
     return Source(path.name, pkgs)
 

@@ -519,7 +519,7 @@ def _mirror_pipfile_lock(tmp_path):
 
 
 def test_pipfile_lock_mirror_is_looked_up_on_wheelgap_index_url(capsys, tmp_path, fake_pypi, monkeypatch):
-    # #146: WHEELGAP_INDEX_URL on the mirror's host sends the names nowhere the lock doesn't already.
+    # #146: WHEELGAP_INDEX_URL on the same index as the lock's source: the names go nowhere new.
     monkeypatch.setenv("WHEELGAP_INDEX_URL", "https://mirror.example.com/pypi")
     code, out, err = run(capsys, str(_mirror_pipfile_lock(tmp_path)), "-p", "3.13", "-t", "linux-x86_64", "--json")
     assert code == 0, err
