@@ -176,7 +176,7 @@ _MARKER_MACHINE = {
 # Raspberry Pi OS 32-bit boots a 64-bit kernel by default on a Pi 4 and 5
 # (https://github.com/raspberrypi/linux/issues/5981); a linux/arm/v7 container on an arm64 host can too, and
 # under linux32 an arm64 kernel says "armv8l".
-# ppc64le and s390x userlands are 64-bit only, so their platform_machine is the target's.
+# ppc64le, s390x and riscv64 userlands are 64-bit only, so their platform_machine is the target's.
 _UNKNOWN_MACHINE_ARCHES = {"win32", "i686", "armv7l"}
 
 DEFAULT_PLATFORMS = ["linux-x86_64", "linux-aarch64", "macos-arm64", "win-amd64"]
