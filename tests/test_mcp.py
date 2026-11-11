@@ -848,3 +848,15 @@ def test_relative_path_in_no_root_falls_back_to_the_working_directory(fake_pypi,
         init_with_roots(), INITIALIZED, roots_answer(tmp_path), call("check_lockfile", path="uvproj", python="3.13")
     )
     assert reply["result"]["structuredContent"]["path"] == str((fixtures / "uvproj").resolve())
+
+
+def test_an_error_response_with_no_id_leaves_the_roots_alone(fake_pypi, fixtures, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    replies = run(
+        init_with_roots(),
+        INITIALIZED,
+        roots_answer(fixtures),
+        {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}},  # not an answer to us
+        call("check_lockfile", path="uvproj", python="3.13", targets=["linux-x86_64"]),
+    )
+    assert replies[-1]["result"]["isError"] is False

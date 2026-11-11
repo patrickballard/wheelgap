@@ -570,7 +570,9 @@ class Server:
                 self._cancel(params.get("requestId"))
             elif method in ("notifications/initialized", "notifications/roots/list_changed"):
                 self._ask_for_roots()
-            elif "method" not in message and message.get("id") == self._roots_request:
+            elif (
+                "method" not in message and self._roots_request is not None and message.get("id") == self._roots_request
+            ):
                 self._roots_answer(message)
             return None
         msg_id = message["id"]
