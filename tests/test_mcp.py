@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import threading
 from collections.abc import Callable, Iterator
 
@@ -757,10 +758,20 @@ def test_check_dockerfile_accepts_file_uris(fake_pypi, tmp_path, fixtures):
     assert reply["result"]["structuredContent"]["targets"] == ["3.13 musl-x86_64"]
 
 
-@pytest.mark.parametrize(
-    "uri", ["https://example.com/uv.lock", "ftp://example.com/uv.lock", "file://otherhost/srv/app/uv.lock"]
-)
+@pytest.mark.parametrize("uri", ["https://example.com/uv.lock", "ftp://example.com/uv.lock"])
 def test_other_uris_are_tool_errors(fake_pypi, uri):
+    (_, reply) = run(init(), call("check_lockfile", path=uri))
+    assert reply["result"]["isError"] is True
+    assert "only file:// URIs" in reply["result"]["content"][0]["text"]
+    assert not fake_pypi
+
+
+def test_a_file_uri_for_another_host_is_unc_on_windows_only(fake_pypi):
+    uri = "file://otherhost/srv/app/uv.lock"
+    if os.name == "nt":  # a UNC path; not opened here, so the test doesn't wait on the network
+        assert mcp._file_uri_path(uri) == mcp.Path(r"\\otherhost\srv\app\uv.lock")
+        return
+    assert mcp._file_uri_path(uri) is None
     (_, reply) = run(init(), call("check_lockfile", path=uri))
     assert reply["result"]["isError"] is True
     assert "only file:// URIs" in reply["result"]["content"][0]["text"]
