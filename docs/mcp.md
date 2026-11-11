@@ -92,8 +92,12 @@ below in `.mcp.json` at the workspace root to share it with your team, or in
 }
 ```
 
-VS Code's docs now call `.vscode/mcp.json` (with a top-level `servers` key) the
-deprecated Local format, so use the files above for a new setup. Docs:
+These files are read by the **Copilot** harness: pick it in the chat's harness
+picker if it isn't already selected. The workspace-root `.mcp.json` is the same
+file Claude Code reads, so one committed file serves both. The older Local
+harness reads `.vscode/mcp.json` instead, with a top-level `servers` key in
+place of `mcpServers`; VS Code's docs call that format deprecated (to be removed
+in February 2027), so use it only if you're still on the Local harness. Docs:
 [VS Code MCP configuration](https://code.visualstudio.com/docs/agents/reference/mcp-configuration).
 
 ## OpenAI Codex CLI
@@ -135,7 +139,9 @@ Open **Settings** > **Developer** > **Edit Config**, or edit
 
 Quit Claude Desktop completely and reopen it. It doesn't start from your shell,
 so if it can't find `uvx`, put the full path from `which uvx` (`where uvx` on
-Windows) in `command`. The server's stderr goes to `mcp-server-wheelgap.log` in
+Windows) in `command`: usually `~/.local/bin/uvx` (uv's installer, written out in
+full, e.g. `/Users/you/.local/bin/uvx`) or `/opt/homebrew/bin/uvx` (Homebrew). On
+Windows, double the backslashes in JSON: `"C:\\Users\\you\\.local\\bin\\uvx.exe"`. The server's stderr goes to `mcp-server-wheelgap.log` in
 `~/Library/Logs/Claude` (macOS), `%APPDATA%\Claude\logs` (Windows) or
 `~/.config/Claude/logs` (Linux). Docs:
 [Connect to local MCP servers](https://modelcontextprotocol.io/docs/develop/connect-local-servers).
