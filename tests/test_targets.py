@@ -336,7 +336,7 @@ def test_version_floors_accept_a_major_only():
     assert target.macos == (15, 0)
 
 
-@pytest.mark.parametrize("arch", ["armv7l", "ppc64le", "s390x", "riscv64"])
+@pytest.mark.parametrize("arch", ["armv7l", "ppc64le", "s390x", "riscv64", "i686"])
 def test_extra_linux_arches(arch):
     glibc, musl = t(f"linux-{arch}"), t(f"musl-{arch}")
     assert accepts(glibc, f"x-1-cp313-cp313-manylinux_2_28_{arch}.whl")
@@ -365,6 +365,12 @@ def test_legacy_manylinux2014_only_where_it_exists():
         ("linux/ppc64le", "linux-ppc64le"),
         ("linux/s390x", "linux-s390x"),
         ("linux/riscv64", "linux-riscv64"),
+        ("linux/386", "linux-i686"),
+        ("linux-386", "linux-i686"),
+        ("linux-x86", "linux-i686"),
+        ("alpine-x86", "musl-i686"),
+        ("windows-x86", "win32"),
+        ("win32", "win32"),
     ],
 )
 def test_extra_arch_aliases(alias, expected):
@@ -373,10 +379,27 @@ def test_extra_arch_aliases(alias, expected):
 
 def test_all_keeps_the_common_eight_and_everything_adds_the_rest():
     assert len(NATIVE_PLATFORMS) == 8
-    assert not any(p.endswith(("armv7l", "ppc64le", "s390x", "riscv64")) for p in NATIVE_PLATFORMS)
+    assert not any(p.endswith(("armv7l", "ppc64le", "s390x", "riscv64", "i686", "win32")) for p in NATIVE_PLATFORMS)
     ts = build_targets(["3.13"], ["everything"])
     assert [x.platform for x in ts] == EVERY_NATIVE_PLATFORM
-    assert len(ts) == 16 and "pyodide" not in EVERY_NATIVE_PLATFORM
+    assert len(ts) == 19 and "pyodide" not in EVERY_NATIVE_PLATFORM
+    assert {"win32", "linux-i686", "musl-i686"} <= set(EVERY_NATIVE_PLATFORM)
+
+
+def test_win32_target():
+    win32 = t("win32")
+    assert accepts(win32, "numpy-2.1.3-cp313-cp313-win32.whl")
+    assert not accepts(t("win-amd64"), "numpy-2.1.3-cp313-cp313-win32.whl")
+    assert not accepts(win32, "numpy-2.1.3-cp313-cp313-win_amd64.whl")
+    assert not accepts(win32, "numpy-2.1.3-cp313-cp313-manylinux_2_17_i686.whl")
+    assert win32.marker_env["platform_machine"] == "x86"
+    assert win32.marker_env["sys_platform"] == "win32"
+
+
+def test_linux_i686_takes_legacy_manylinux():
+    assert accepts(t("linux-i686"), "x-1-cp313-cp313-manylinux1_i686.whl")
+    assert accepts(t("linux-i686"), "x-1-cp313-cp313-manylinux_2_12_i686.whl")
+    assert not accepts(t("linux-x86_64"), "x-1-cp313-cp313-manylinux_2_17_i686.whl")
 
 
 def test_plain_linux_arch_wheels_count_on_glibc_only():
