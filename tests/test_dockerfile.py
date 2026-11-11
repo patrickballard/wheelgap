@@ -561,6 +561,13 @@ def test_lines_that_do_not_continue(tmp_path, text):
     assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.12", "linux-x86_64", glibc="2.41")
 
 
+def test_x1c_before_a_hash_is_not_a_comment(tmp_path):
+    # Docker's isComment trims unicode.IsSpace only, so this line isn't a comment: it continues onto the FROM
+    # below, and the final stage is the 3.13 one.
+    text = "FROM python:3.13-alpine AS app\n\x1c# note \\\nFROM python:3.12-slim\n"
+    assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.13", "musl-x86_64", musl="1.2")
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -662,6 +669,13 @@ def test_escape_directive_rules(tmp_path):
         # Docker trims only unicode.IsSpace, so \x1cFROM is an unknown instruction to it, as FROM\x1d is.
         ("FROM python:3.12-slim\n\x1cFROM python:3.13-alpine\n", "unknown instruction '\\\\x1cFROM'"),
         ("FROM python:3.12-slim\nFROM\x1d python:3.13-alpine\n", "unknown instruction 'FROM\\\\x1d'"),
+        # With a space or tab after the \x1c, Docker's keyword is "\x1c" alone: still unknown, never a fallback.
+        ("FROM python:3.12-slim\n\x1c FROM python:3.13-alpine\n", "unknown instruction '\\\\x1c'"),
+        ("FROM python:3.12-slim\n\x1c\tFROM python:3.13-alpine\n", "unknown instruction '\\\\x1c'"),
+        # The same when the file ends mid-continuation.
+        ("FROM python:3.13-alpine\n\x1cFROM python:3.12-slim \\\n", "unknown instruction"),
+        # A trailing \x1c is part of the image reference to Docker, which rejects the tag.
+        ("FROM python:3.13-alpine\x1c\n", "invalid tag"),
     ],
 )
 def test_dockerfiles_docker_rejects(tmp_path, text, message):

@@ -497,7 +497,8 @@ def _from_lines(text: str) -> list[str]:
             raise DockerfileError(
                 f"unknown instruction {words[0]!r} (Docker splits instructions on ASCII whitespace only)"
             )
-        if words[0].upper() != "FROM" and re.fullmatch(r"(?i)FROM", words[0].strip()):
+        # Python's strip() also drops \x1c-\x1f, so this catches "\x1cFROM x" and "\x1c FROM x" alike.
+        if words[0].upper() != "FROM" and re.match(r"(?i)FROM(\s|$)", instruction.strip()):
             raise DockerfileError(
                 f"unknown instruction {words[0]!r} (Docker doesn't count \\x1c-\\x1f as whitespace around FROM)"
             )
@@ -544,7 +545,8 @@ def _from_lines(text: str) -> list[str]:
             parts.append(line[: m.start()])
             continue
         instruction = "".join([*parts, line])  # Docker joins continued lines with nothing in between
-        finish(instruction.strip(_GO_SPACES), joined=bool(parts))  # splitCommand: strings.TrimSpace
+        # splitCommand: strings.TrimSpace, https://github.com/moby/buildkit/blob/cedaeca/frontend/dockerfile/parser/split_command.go
+        finish(instruction.strip(_GO_SPACES), joined=bool(parts))
         heredocs = heredocs_in(instruction)
         parts = []
     if parts:  # the file ended mid-continuation: Docker still reads what's there
