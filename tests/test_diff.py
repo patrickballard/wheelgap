@@ -296,8 +296,8 @@ def test_diff_json(fake_pypi, tmp_path, capsys):
     assert data["worse"] == [
         {
             "name": "ranged",
-            "old_version": "1.5",
-            "new_version": "1.9",
+            "old_versions": ["1.5"],
+            "new_versions": ["1.9"],
             "targets": {
                 "linux-x86_64": {"old_status": "wheel", "new_status": "source"},
                 "win-amd64": {"old_status": "wheel", "new_status": "source"},
@@ -307,7 +307,7 @@ def test_diff_json(fake_pypi, tmp_path, capsys):
     assert data["new"] == [
         {
             "name": "NoWheels",
-            "version": "0.9",
+            "versions": ["0.9"],
             "targets": {"linux-x86_64": {"status": "source"}, "win-amd64": {"status": "source"}},
         }
     ]
@@ -325,13 +325,15 @@ def test_diff_json_skipped_cells_say_why(fake_pypi, tmp_path, capsys):
     old, new = write_pair(tmp_path, "purewheel==3.1\n", "purewheel @ git+https://example.com/purewheel\n")
     assert main([old, new, *TARGET, "--json"]) == 1
     (item,) = json.loads(capsys.readouterr().out)["worse"]
+    assert item["old_versions"] == ["3.1"] and item["new_versions"] == []  # not "(url)"
     assert item["targets"]["linux-x86_64"] == {"old_status": "wheel", "new_status": "skipped", "new_skip_reason": "url"}
 
 
 def test_diff_json_bad_input(fake_pypi, tmp_path, capsys):
     assert main([str(tmp_path / "nope.lock"), str(tmp_path / "nope.lock"), *TARGET, "--json"]) == 2
     out, err = capsys.readouterr()
-    assert "error" in json.loads(out) and err.startswith("wheelgap: error:")
+    error = json.loads(out)["error"]
+    assert error["type"] and "nope.lock" in error["message"] and err.startswith("wheelgap: error:")
 
 
 def test_wheelgap_diff_subcommand(fake_pypi, tmp_path, capsys, monkeypatch):
@@ -352,5 +354,12 @@ def test_a_folder_named_diff_is_still_an_input(fake_pypi, tmp_path, capsys, monk
     (tmp_path / "diff").mkdir()
     (tmp_path / "diff" / "requirements.txt").write_text("purewheel==3.1\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    assert cli_main(["diff", *TARGET]) == 0
-    assert "purewheel" not in capsys.readouterr().err  # checked as a project, not run as the subcommand
+    assert cli_main(["diff", *TARGET]) == 0  # the subcommand would exit 2: it needs OLD and NEW
+    assert "reading ./diff as an input" in capsys.readouterr().err
+
+
+def test_diff_json_unknown_version_is_an_empty_list(fake_pypi, tmp_path, capsys):
+    old, new = write_pair(tmp_path, "purewheel==3.1\n", "purewheel==3.1\nno-such-package\n")
+    assert main([old, new, *TARGET, "--json"]) == 1
+    (item,) = json.loads(capsys.readouterr().out)["new"]
+    assert item["versions"] == [] and item["targets"]["linux-x86_64"] == {"status": "unknown"}

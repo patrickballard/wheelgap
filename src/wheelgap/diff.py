@@ -93,7 +93,7 @@ def merge(results: list[Result], targets: list[Target]) -> dict[str, Package]:
             found = [r.statuses.get(t, Status.NOT_NEEDED) for r in rs]
             needed = [s for s in found if s is not Status.NOT_NEEDED]
             statuses[t] = max(needed, key=RANK.__getitem__) if needed else Status.NOT_NEEDED
-        versions = list(dict.fromkeys(r.version or "?" for r in rs))
+        versions = list(dict.fromkeys(r.version for r in rs if r.version))
         merged[key] = Package(rs[0].name, versions, statuses)
     return merged
 
@@ -168,7 +168,7 @@ def compare(before: dict[str, Package], after: dict[str, Package], targets: list
                 report.new.append(
                     {
                         "name": pkg.name,
-                        "version": pkg.version,
+                        "versions": pkg.versions,
                         "targets": {t.label(multi_py): _side(pkg, t) for t in gaps},
                     }
                 )
@@ -187,8 +187,8 @@ def compare(before: dict[str, Package], after: dict[str, Package], targets: list
             report.worse.append(
                 {
                     "name": pkg.name,
-                    "old_version": was.version,
-                    "new_version": pkg.version,
+                    "old_versions": was.versions,
+                    "new_versions": pkg.versions,
                     "targets": {t.label(multi_py): _side(was, t, "old_") | _side(pkg, t, "new_") for t in changed},
                 }
             )
@@ -196,7 +196,8 @@ def compare(before: dict[str, Package], after: dict[str, Package], targets: list
 
 
 def json_report(report: Report, targets: list[Target]) -> str:
-    """--json: one object. Its keys are a public interface, like the main command's --json."""
+    """--json: one object. Its keys are a public interface, like the main command's --json. Versions are
+    lists: empty when unknown or for a package installed from git, a path or a URL; several for a uv.lock fork."""
     multi_py = len({t.python for t in targets}) > 1
     return json.dumps(
         {
@@ -208,7 +209,6 @@ def json_report(report: Report, targets: list[Target]) -> str:
             "summary": {"worse": len(report.worse), "new": len(report.new)},
         },
         indent=2,
-        ensure_ascii=False,
     )
 
 
