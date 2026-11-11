@@ -34,7 +34,7 @@ body:
     attributes:
       label: What pip says (optional, but it settles it)
       description: |
-        The same package and target checked with pip, e.g. `pip download --no-deps --only-binary=:all: -d /tmp/wg-check --platform musllinux_1_2_aarch64 --python-version 3.14 --implementation cp --abi cp314t numpy==2.3.4`. Paste the command and its output.
+        The same package and target checked with pip, e.g. `pip download --no-deps --only-binary=:all: --index-url https://pypi.org/simple -d /tmp/wg-check --platform musllinux_1_2_aarch64 --platform musllinux_1_1_aarch64 --python-version 3.14 --implementation cp --abi cp314t numpy==2.3.4`. Paste the command and its output. [AGENTS.md](https://github.com/wheelgap/wheelgap/blob/main/AGENTS.md#no-issue-fits-find-a-real-bug) has the full list of `--platform` tags to pass for each target.
       render: text
   - type: textarea
     id: found-by
