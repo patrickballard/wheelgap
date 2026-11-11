@@ -82,10 +82,20 @@ def test_not_found_is_not_cached(fake_pypi, lookup_cache, name, version):
     assert not list(lookup_cache.iterdir())
 
 
-@pytest.mark.parametrize("response", [None, {"urls": "x"}, {"urls": [{"name": "no-filename.whl"}]}])
+@pytest.mark.parametrize(
+    "response", [None, {}, {"info": {}}, {"urls": "x"}, {"urls": None}, {"urls": [{"name": "no-filename.whl"}]}]
+)
 def test_an_odd_response_is_not_cached(monkeypatch, lookup_cache, response):
-    monkeypatch.setattr(pypi, "fetch_json", lambda url, timeout=20.0: response)
-    assert lookup("fastlib", "2.0.0").error == "unexpected response from the index"
+    calls = []
+
+    def fetch_json(url, timeout=20.0):
+        calls.append(url)
+        return response
+
+    monkeypatch.setattr(pypi, "fetch_json", fetch_json)
+    lookup("fastlib", "2.0.0")
+    lookup("fastlib", "2.0.0")
+    assert len(calls) == 2  # asked again, not answered from the cache
     assert not list(lookup_cache.iterdir())
 
 
@@ -193,6 +203,7 @@ def test_the_index_is_part_of_the_key(fake_pypi, monkeypatch):
         ("darwin", {"XDG_CACHE_HOME": str(Path("/xdg").absolute())}, Path.home() / "Library" / "Caches"),
         ("win32", {"LOCALAPPDATA": str(Path("/local").absolute())}, Path("/local").absolute()),
         ("win32", {"LOCALAPPDATA": ""}, Path.home() / "AppData" / "Local"),
+        ("win32", {"LOCALAPPDATA": "relative\\dir"}, Path.home() / "AppData" / "Local"),
     ],
 )
 def test_cache_dir_per_platform(monkeypatch, platform, env, expected):

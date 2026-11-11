@@ -24,7 +24,8 @@ def _now() -> float:
 def cache_dir() -> Path:
     """The platform's cache folder, as pip and uv choose it (without platformdirs)."""
     if sys.platform == "win32":
-        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        local = os.environ.get("LOCALAPPDATA", "")
+        base = local if os.path.isabs(local) else str(Path.home() / "AppData" / "Local")
     elif sys.platform == "darwin":
         base = str(Path.home() / "Library" / "Caches")
     else:

@@ -342,7 +342,9 @@ def fill(pkg: Package, python: str | None = None, use_cache: bool = False) -> Pa
         else:
             names = [u["filename"] for u in urls if not u.get("yanked")]
         pkg.files = names
-        if key and cached is None:  # a fresh answer that parsed: errors and odd responses are never cached
+        # Only a fresh answer that parsed and listed its files: a body with no "urls" ({}) reads as no files,
+        # and caching that would turn a bad response into a day of false "missing" answers.
+        if key and cached is None and isinstance(data.get("urls"), list):
             cache.save_files(*key, urls)
     except (ValueError, TypeError, KeyError, AttributeError):
         pkg.error = "unexpected response from the index"
