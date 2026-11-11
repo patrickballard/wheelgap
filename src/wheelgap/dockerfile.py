@@ -456,9 +456,7 @@ def _heredoc_rules(syntax: str | None) -> int | None:
     if m.group(1) is None:
         return 16
     minor = int(m.group(1))
-    if minor >= 16:
-        return 16
-    return minor if minor >= 4 or (minor == 3 and m.group(2)) else 0
+    return min(minor, 16) if minor >= 4 or (minor == 3 and m.group(2)) else 0
 
 
 def _from_lines(text: str) -> list[str]:

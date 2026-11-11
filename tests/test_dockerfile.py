@@ -317,6 +317,10 @@ _TWO_STAGES = "FROM python:3.13-alpine AS base\nFROM python:3.12-slim\n"
                 "# syntax=docker/dockerfile:1 key=value",
             ]
         ],
+        # From 1.16 a space after << is fine; from 1.9 parseJSON rejects `["a"] <<EOF`, so it's a heredoc.
+        ("# syntax=docker/dockerfile:1.16\n" + _TWO_STAGES + "RUN cat << EOF\nFROM base\nEOF\n", _SLIM),
+        ("# syntax=docker/dockerfile:1.17\n" + _TWO_STAGES + "RUN cat << EOF\nFROM base\nEOF\n", _SLIM),
+        ("# syntax=docker/dockerfile:1.9\n" + _TWO_STAGES + 'RUN ["a"] <<EOF\nFROM base\nEOF\n', _SLIM),
         # No heredoc where an old frontend has none either: nothing to read differently.
         *[
             (f"# syntax={image}\n{_TWO_STAGES}{line}\nFROM base\n", _ALPINE)
@@ -632,6 +636,7 @@ def test_escape_directive_rules(tmp_path):
             for tag, line in [
                 ("1.7", "RUN cat << EOF"),
                 ("1.15.0", "RUN cat <<\tEOF"),
+                ("1.15", "RUN cat <<\rEOF"),  # \r splits words there, so `<<` is alone
                 ("1.3-labs", "RUN echo $((1 << EOF))"),
                 ("1.15-labs", "RUN cat <<EOF ${x:-y}"),
                 ("1.4", "RUN cat <<EOF${x}"),
