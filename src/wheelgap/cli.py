@@ -1027,7 +1027,7 @@ def main(argv: list[str] | None = None) -> int:
                 "the newest matching release",
                 file=sys.stderr,
             )
-            if source.requires_python:
+            if source.requires_python and not quiet:  # the answer is right either way, so -q drops these
                 try:
                     SpecifierSet(source.requires_python)
                 except InvalidSpecifier:
@@ -1037,7 +1037,7 @@ def main(argv: list[str] | None = None) -> int:
                         file=sys.stderr,
                     )
                 else:
-                    if outside := pythons_outside_lock(source, targets):
+                    if outside := pythons_outside_lock(source, targets, bounds_only=False):
                         print(
                             f"wheelgap: note: {source.label} requires Python {source.requires_python}, "
                             f"which leaves out Python {', '.join(outside)}; those targets are checked anyway "
