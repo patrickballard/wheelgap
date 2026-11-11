@@ -20,7 +20,7 @@ from packaging.version import InvalidVersion, Version
 
 from . import __version__
 from .api import running_python
-from .check import Row, Status, check, explain, has_sdist, marker_holds, reachable
+from .check import CELL, Row, Status, check, explain, has_sdist, marker_holds, reachable
 from .dockerfile import DockerfileError, read_dockerfile
 from .junit import write_junit
 from .offline import require_offline, undo_offline
@@ -357,16 +357,6 @@ def use_color(mode: str) -> bool:
     if os.environ.get("FORCE_COLOR"):
         return True
     return sys.stdout.isatty()
-
-
-CELL = {
-    Status.WHEEL: ("✓", "green"),
-    Status.SOURCE: ("● source", "yellow"),
-    Status.MISSING: ("✗ missing", "red"),
-    Status.UNKNOWN: ("? unknown", "dim"),
-    Status.NOT_NEEDED: ("–", "dim"),
-    Status.BUNDLED: ("✓ bundled", "green"),
-}
 
 
 def render_table(rows: list[Row], targets: list[Target], style: Style) -> list[str]:

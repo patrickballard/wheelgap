@@ -160,6 +160,13 @@ def check_lockfile(
     other-Python recheck is skipped. Locked files may therefore omit wheels for those Python versions.
     online=True and offline=True cannot be combined.
     """
+    return _check_lockfile(path, targets, online=online, offline=offline)[0]
+
+
+def _check_lockfile(
+    path: str | Path, targets: Sequence[Target] | None, *, online: bool, offline: bool
+) -> tuple[list[Result], Source]:
+    """check_lockfile(), also returning the loaded source (diff.py needs its skipped packages)."""
     targets = _package_targets(targets)
     if online and offline:
         raise ValueError("online=True and offline=True cannot be combined")
@@ -171,4 +178,4 @@ def check_lockfile(
     if not online and not offline and pythons_outside_lock(source, targets):
         recheck_lock(source.packages)
     rows: list[Row] = [r for r in check([source], targets) if r.needed]
-    return [_result(r.package, dict(r.results)) for r in rows]
+    return [_result(r.package, dict(r.results)) for r in rows], source

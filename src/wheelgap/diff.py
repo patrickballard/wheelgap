@@ -12,7 +12,10 @@ How statuses rank, per target:
 - `unknown` (the package couldn't be checked) isn't on that scale, because it says nothing about what pip
   would do. So a change is never called "not worse" on a guess: anything → `unknown` is worse, and
   `unknown` → `source` or `missing` is worse too. Only `unknown` → `wheel`, `bundled` or `n/a` is not.
-  `unknown` on both sides is unchanged, and a note on stderr names those packages.
+  `unknown` on both sides counts as worse if the version changed; at the same version it's unchanged, and a
+  note on stderr names those packages.
+- A package that NEW installs from somewhere wheelgap doesn't check (git, a path, a URL, an editable install
+  or a private index) can't be checked either, so on each target that installs it, it counts as worse.
 - A package listed more than once (a uv.lock fork) takes its worst status on each target, with `unknown`
   beating `missing`, and ignoring `n/a` unless every entry is `n/a`.
 """
@@ -26,9 +29,9 @@ from dataclasses import dataclass
 
 from packaging.utils import canonicalize_name
 
-from .api import Result, check_lockfile, make_targets
-from .check import Status
-from .cli import CELL
+from .api import Result, _check_lockfile, make_targets
+from .check import CELL, Status, applies, reachable
+from .sources import Source
 from .targets import Target
 
 # Higher is worse. UNKNOWN only orders entries of the same package on one target (see the module docstring).
@@ -52,6 +55,15 @@ class Package:
     statuses: dict[Target, Status]
 
 
+@dataclass
+class Skipped:
+    """A package one side installs from outside the index (git, path, private index...), so it isn't checked."""
+
+    name: str
+    reason: str
+    targets: set[Target]
+
+
 def merge(results: list[Result], targets: list[Target]) -> dict[str, Package]:
     """The results keyed by canonical name, with entries for the same name combined."""
     grouped: dict[str, list[Result]] = {}
@@ -69,6 +81,20 @@ def merge(results: list[Result], targets: list[Target]) -> dict[str, Package]:
     return merged
 
 
+def skipped(source: Source, targets: list[Target]) -> dict[str, Skipped]:
+    """The source's skipped packages by canonical name, with the targets that install them (as check() decides)."""
+    installed = {t: reachable(source, t) for t in targets} if source.edges is not None else None
+    out: dict[str, Skipped] = {}
+    for i, pkg in enumerate(source.packages):
+        if not pkg.skip:
+            continue
+        on = {t for t in targets if (i in installed[t] if installed is not None else applies(pkg, t))}
+        if on:
+            entry = out.setdefault(pkg.key, Skipped(pkg.name, pkg.skip, set()))
+            entry.targets |= on
+    return out
+
+
 def worse(old: Status, new: Status) -> bool:
     if new is Status.UNKNOWN:
         return old is not Status.UNKNOWN
@@ -77,10 +103,13 @@ def worse(old: Status, new: Status) -> bool:
     return RANK[new] > RANK[old]
 
 
-def compare(old: list[Result], new: list[Result], targets: list[Target]) -> tuple[list[str], int, int, list[str]]:
+def compare(
+    old: list[Result], new: list[Result], targets: list[Target], new_skipped: dict[str, Skipped] | None = None
+) -> tuple[list[str], int, int, list[str]]:
     """The report lines, how many packages got worse, how many new packages have gaps, and the names
     that couldn't be checked on either side."""
     before, after = merge(old, targets), merge(new, targets)
+    new_skipped = new_skipped or {}
     multi_py = len({t.python for t in targets}) > 1
     lines: list[str] = []
     n_worse = n_new = 0
@@ -94,16 +123,30 @@ def compare(old: list[Result], new: list[Result], targets: list[Target]) -> tupl
                 lines += [f"  {t.label(multi_py)}: {CELL[pkg.statuses[t]][0]}" for t in gaps]
             continue
         was = before[key]
-        changed = [t for t in targets if worse(was.statuses[t], pkg.statuses[t])]
-        if any(was.statuses[t] is Status.UNKNOWN and pkg.statuses[t] is Status.UNKNOWN for t in targets):
-            unchecked.append(pkg.name)
+        same_version = pkg.version == was.version
+        changed = []
+        for t in targets:
+            o, n = was.statuses[t], pkg.statuses[t]
+            if o is Status.UNKNOWN and n is Status.UNKNOWN and same_version:
+                if pkg.name not in unchecked:
+                    unchecked.append(pkg.name)
+            elif worse(o, n) or (o is Status.UNKNOWN and n is Status.UNKNOWN):
+                changed.append(t)  # unknown at a new version: it may have lost a wheel, so don't call it unchanged
         if changed:
             n_worse += 1
-            version = pkg.version if pkg.version == was.version else f"{was.version} → {pkg.version}"
-            lines.append(f"{pkg.name} {version}")
+            lines.append(f"{pkg.name} {pkg.version if same_version else f'{was.version} → {pkg.version}'}")
             lines += [
                 f"  {t.label(multi_py)}: {CELL[was.statuses[t]][0]} → {CELL[pkg.statuses[t]][0]}" for t in changed
             ]
+    for key, was in before.items():
+        # Gone from NEW's results: removed (fine), or now installed from somewhere that isn't checked.
+        if key in after or key not in new_skipped:
+            continue
+        skip = new_skipped[key]
+        on = [t for t in targets if t in skip.targets]
+        n_worse += 1
+        lines.append(f"{was.name} {was.version} → ({skip.reason})")
+        lines += [f"  {t.label(multi_py)}: {CELL[was.statuses[t]][0]} → skipped ({skip.reason})" for t in on]
     return lines, n_worse, n_new, unchecked
 
 
@@ -145,13 +188,13 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     try:
         targets = make_targets(args.python or None, args.target or None)
-        old = check_lockfile(args.old, targets)
-        new = check_lockfile(args.new, targets)
+        old, _ = _check_lockfile(args.old, targets, online=False, offline=False)
+        new, new_source = _check_lockfile(args.new, targets, online=False, offline=False)
     except Exception as e:  # unknown targets, unreadable or malformed lockfiles
-        print(f"wheelgap: error: {e}", file=sys.stderr)
+        print(f"wheelgap: error: {type(e).__name__}: {e}", file=sys.stderr)
         return 2
 
-    lines, n_worse, n_new, unchecked = compare(old, new, targets)
+    lines, n_worse, n_new, unchecked = compare(old, new, targets, skipped(new_source, targets))
     for line in lines:
         print(line)
     print(summary(n_worse, n_new))

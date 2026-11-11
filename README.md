@@ -312,7 +312,7 @@ This checks the latest release of the most-downloaded packages (from [top-pypi-p
 python -m wheelgap.diff old/uv.lock uv.lock -p 3.13 -t linux-aarch64,musl-aarch64
 ```
 
-This checks both lockfiles and lists the packages that got worse on a target (a wheel that became a source build, say) and the new packages with gaps, so a dependency bump that drops a platform fails CI. It exits 1 if there are any, 0 if not, and 2 on bad input. A package that can no longer be checked (`unknown`) counts as worse. It's a module entry point for now; `wheelgap diff` will follow.
+This checks both lockfiles and lists the packages that got worse on a target (a wheel that became a source build, say) and the new packages with gaps, so a dependency bump that drops a platform fails CI. It exits 1 if there are any, 0 if not, and 2 on bad input. A package that can no longer be checked counts as worse: `unknown`, or now installed from git, a path, a URL or a private index. The same `-p` and `-t` apply to both lockfiles, and `[tool.wheelgap]` and `.python-version` aren't read yet, so pass them explicitly. It's a module entry point for now; `wheelgap diff` will follow.
 
 ### With an AI coding agent
 

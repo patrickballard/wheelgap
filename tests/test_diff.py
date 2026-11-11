@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from wheelgap.check import Status
@@ -77,6 +79,57 @@ def test_diff_notes_packages_unknown_on_both_sides(fake_pypi, tmp_path, capsys):
     assert "couldn't check does-not-exist in either lockfile" in err
 
 
+def test_diff_counts_unknown_at_a_new_version_as_worse(fake_pypi, tmp_path, capsys):
+    old, new = write_pair(tmp_path, "does-not-exist==1.0\n", "does-not-exist==2.0\n")
+    assert main([old, new, *TARGET]) == 1
+    out, err = capsys.readouterr()
+    assert out.splitlines() == [
+        "does-not-exist 1.0 → 2.0",
+        "  linux-x86_64: ? unknown → ? unknown",
+        "1 package got worse.",
+    ]
+    assert "couldn't check" not in err
+
+
+def test_diff_counts_a_package_now_installed_from_git_as_worse(fake_pypi, tmp_path, capsys):
+    old, new = write_pair(tmp_path, "ranged==1.5\n", "ranged @ git+https://github.com/example/ranged@v1.9\n")
+    assert main([old, new, *TARGET]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "ranged 1.5 → (url)",
+        "  linux-x86_64: ✓ → skipped (url)",
+        "1 package got worse.",
+    ]
+
+
+def test_diff_counts_a_package_now_from_a_private_index_as_worse(fake_pypi, tmp_path, capsys):
+    old, _ = write_pair(tmp_path, "ranged==1.5\n", "")
+    new = tmp_path / "new" / "Pipfile.lock"
+    lock = {
+        "_meta": {"sources": [{"name": "internal", "url": "https://pkgs.example.com/simple"}]},
+        "default": {"ranged": {"version": "==1.9", "index": "internal"}},
+    }
+    new.write_text(json.dumps(lock), encoding="utf-8")
+    assert main([old, str(new), *TARGET]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "ranged 1.5 → (private index)",
+        "  linux-x86_64: ✓ → skipped (private index)",
+        "1 package got worse.",
+    ]
+
+
+@pytest.mark.parametrize(
+    "new",
+    [
+        "purewheel==3.1\n",  # removed
+        'ranged @ git+https://github.com/example/ranged@v1.9 ; sys_platform == "win32"\n',  # not on this target
+    ],
+)
+def test_diff_ignores_a_package_new_no_longer_installs(fake_pypi, tmp_path, capsys, new):
+    old, new = write_pair(tmp_path, "ranged==1.5\npurewheel==3.1\n", new)
+    assert main([old, new, *TARGET]) == 0
+    assert capsys.readouterr().out.splitlines() == ["Nothing got worse."]
+
+
 @pytest.mark.parametrize(
     ("old", "new", "expected"),
     [
@@ -106,8 +159,8 @@ def test_worse(old, new, expected):
     [
         (["{tmp}/missing.txt", "{new}"], "missing.txt"),
         (["{tmp}/empty", "{new}"], "no lockfile found"),
-        (["{tmp}/notes.md", "{new}"], "don't know how to read"),
-        (["{new}", "{new}", "-t", "linux-aarch46"], "linux-aarch64"),
+        (["{tmp}/notes.md", "{new}"], "SourceError: don't know how to read"),
+        (["{new}", "{new}", "-t", "linux-aarch46"], "TargetError: "),
         (["{new}", "{new}", "-p", "three"], "can't parse Python version"),
     ],
 )
