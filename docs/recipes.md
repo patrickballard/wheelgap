@@ -122,17 +122,22 @@ uvx wheelgap@latest uv.lock -p 3.13 -t linux-x86_64,linux-aarch64 --json > wheel
   cache. Pin a release, such as `uvx wheelgap@0.8.0`, when the result must not
   change between runs, and check `--help` on the same command for the flags
   that release has. `pipx run wheelgap` works too.
-- Always pass `-p` and `-t`. Without them, the Python comes from a
-  `.python-version` file or the interpreter wheelgap runs on, and the targets
+- Always pass `-p` and `-t`. Without them, the Python comes from
+  `[tool.wheelgap]`, a `.python-version` file or the interpreter wheelgap runs
+  on, in that order, and the targets
   from `[tool.wheelgap]` or the built-in defaults, so the same command can check
   different things on different machines. `uvx wheelgap --list-targets` lists
   the target names.
 - Lockfiles (`uv.lock`, `pylock.toml`, `poetry.lock`, `pdm.lock`) are read
   without network access, as long as their `requires-python` includes the Python
-  you check. Requirements files, `Pipfile.lock` and package names are looked up
-  on PyPI.
+  you check. Requirements files, `Pipfile.lock`, package names and lockfile
+  entries that record no files (as in an old-format `poetry.lock`) are looked
+  up on PyPI.
 
-**Exit codes:** `0` no gaps, `1` gaps found, `2` bad input. With `--json`, a bad
+**Exit codes:** `0` no gaps, `1` gaps found, `2` bad input. A package that
+couldn't be looked up (`unknown`) counts as a gap and exits `1`, even with
+`--fail-on missing`, so check its `error` before reporting it as a real gap.
+With `--json`, a bad
 input (a missing lockfile, an unknown target, a bad `[tool.wheelgap]` value)
 prints `{"error": {"message": "...", "type": "..."}}` on stdout as well as the
 `wheelgap: error:` line on stderr. A command-line usage error, such as an
@@ -171,7 +176,7 @@ contributors not to rename or remove them.
 
 **Accepted gaps:** `--fail-on missing` (or `fail-on = "missing"` in
 `[tool.wheelgap]`) allows source builds and only exits `1` when a package can't
-be installed at all. `--ignore psycopg2` (repeatable or comma-separated) takes a
+be installed at all or couldn't be looked up. `--ignore psycopg2` (repeatable or comma-separated) takes a
 package out of the table, the counts and the exit code, and lists it as ignored.
 `ignore = ["psycopg2"]` in `[tool.wheelgap]` makes that the default; `--ignore`
 flags replace the configured list rather than adding to it.
@@ -179,10 +184,11 @@ flags replace the configured list rather than adding to it.
 ### Worked example
 
 Run from a clone of this repository, on its `tests/fixtures/uvproj` test
-project, which needs no network access. This output is from wheelgap 0.8.0.
+project, which needs no network access. The commands pin wheelgap 0.8.0 so the
+output below stays reproducible.
 
 ```bash
-uvx wheelgap tests/fixtures/uvproj/uv.lock -p 3.13 -t linux-x86_64,linux-aarch64 --json > wheelgap.json
+uvx wheelgap@0.8.0 tests/fixtures/uvproj/uv.lock -p 3.13 -t linux-x86_64,linux-aarch64 --json > wheelgap.json
 echo $?
 ```
 
@@ -209,7 +215,7 @@ puresdist linux-aarch64 source
 Ask why `fastlib` has no ARM wheel (this exits `1` too):
 
 ```bash
-uvx wheelgap tests/fixtures/uvproj/uv.lock -p 3.13 -t linux-aarch64 --explain
+uvx wheelgap@0.8.0 tests/fixtures/uvproj/uv.lock -p 3.13 -t linux-aarch64 --explain
 ```
 
 ```text
@@ -243,7 +249,7 @@ skipped 2 non-index packages: demo (editable), gitdep (git)
 Source builds are acceptable here, so check that nothing fails to install:
 
 ```bash
-uvx wheelgap tests/fixtures/uvproj/uv.lock -p 3.13 -t linux-x86_64,linux-aarch64 --fail-on missing -q
+uvx wheelgap@0.8.0 tests/fixtures/uvproj/uv.lock -p 3.13 -t linux-x86_64,linux-aarch64 --fail-on missing -q
 echo $?
 ```
 
