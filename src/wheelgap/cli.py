@@ -683,20 +683,6 @@ def refuse_pyodide_url(spec: str, how: str = "--offline") -> None:
         raise PyodideLockError(f"{how}: {spec} would be downloaded; save it and pass its path, or {undo_offline(how)}")
 
 
-def is_requirements_source(source: Source) -> bool:
-    """True for a requirements file (including .in and requirements*.lock), not lockfiles or CLI names."""
-    name = Path(source.label).name
-    if name == "command line":
-        return False
-    if name in ("uv.lock", "pylock.toml", "poetry.lock", "pdm.lock", "Pipfile.lock"):
-        return False
-    if name.startswith("pylock.") and name.endswith(".toml"):
-        return False
-    if name.endswith(".lock") and "uv" in name and not name.startswith("requirements"):
-        return False
-    return name.endswith((".txt", ".in")) or (name.startswith("requirements") and name.endswith(".lock"))
-
-
 def unpinned_requirement_names(source: Source) -> list[str]:
     """Index requirements that aren't an exact pin. Skipped and non-index lines are omitted."""
     names = []
@@ -710,7 +696,7 @@ def unpinned_requirement_names(source: Source) -> list[str]:
 
 def note_unpinned_requirements(sources: list[Source]) -> None:
     for source in sources:
-        if not is_requirements_source(source):
+        if not source.requirements:
             continue
         names = unpinned_requirement_names(source)
         if not names:
