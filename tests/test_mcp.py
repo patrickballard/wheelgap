@@ -1,7 +1,9 @@
 import io
 import json
 import os
+import re
 import threading
+import tomllib
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -986,3 +988,26 @@ def test_diff_lockfiles_errors(fake_pypi, tmp_path, arguments, message):
     assert reply["result"]["isError"] is True
     assert message in reply["result"]["content"][0]["text"]
     assert not fake_pypi
+
+
+def test_client_setup_docs_snippets_parse_and_start_the_server():
+    """docs/mcp.md: every config snippet parses and runs the wheelgap-mcp script; the tool list is current."""
+    root = Path(__file__).resolve().parent.parent
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert project["scripts"]["wheelgap-mcp"] == "wheelgap.mcp:main"
+    released = ["--from", project["name"], "wheelgap-mcp"]
+    text = (root / "docs" / "mcp.md").read_text(encoding="utf-8")
+    blocks = re.findall(r"```(\w+)\n(.*?)```", text, re.DOTALL)
+    servers = [json.loads(body)["mcpServers"]["wheelgap"] for lang, body in blocks if lang == "json"]
+    servers += [tomllib.loads(body)["mcp_servers"]["wheelgap"] for lang, body in blocks if lang == "toml"]
+    assert len(servers) == 5
+    for server in servers:
+        assert server["command"] == "uvx"
+        assert server["args"] == released
+        assert server.get("type", "stdio") == "stdio"
+    for lang, body in blocks:
+        if lang == "bash":
+            assert "uvx --from wheelgap wheelgap-mcp" in body
+    assert "uvx --from git+https://github.com/wheelgap/wheelgap wheelgap-mcp" in text
+    for tool in mcp.TOOLS:
+        assert f"`{tool['name']}`" in text
