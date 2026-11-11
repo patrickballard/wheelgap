@@ -2,10 +2,12 @@ import json
 
 import pytest
 
+from wheelgap.api import Result, make_targets
 from wheelgap.check import Status
-from wheelgap.diff import main, worse
+from wheelgap.diff import main, merge, worse
 
 TARGET = ["-p", "3.13", "-t", "linux-x86_64"]
+TWO_TARGETS = ["-p", "3.13", "-t", "linux-x86_64", "-t", "win-amd64"]
 
 
 def write_pair(tmp_path, old, new):
@@ -111,7 +113,7 @@ def test_diff_counts_a_package_now_from_a_private_index_as_worse(fake_pypi, tmp_
     new.write_text(json.dumps(lock), encoding="utf-8")
     assert main([old, str(new), *TARGET]) == 1
     assert capsys.readouterr().out.splitlines() == [
-        "ranged 1.5 → (private index)",
+        "ranged 1.5 → 1.9",
         "  linux-x86_64: ✓ → skipped (private index)",
         "1 package got worse.",
     ]
@@ -128,6 +130,112 @@ def test_diff_ignores_a_package_new_no_longer_installs(fake_pypi, tmp_path, caps
     old, new = write_pair(tmp_path, "ranged==1.5\npurewheel==3.1\n", new)
     assert main([old, new, *TARGET]) == 0
     assert capsys.readouterr().out.splitlines() == ["Nothing got worse."]
+
+
+def test_diff_compares_a_package_both_checked_and_skipped_per_target(fake_pypi, tmp_path, capsys):
+    new = (
+        'ranged==1.5 ; sys_platform == "win32"\n'
+        'ranged @ git+https://github.com/example/ranged@v1 ; sys_platform == "linux"\n'
+    )
+    old, new = write_pair(tmp_path, "ranged==1.5\n", new)
+    assert main([old, new, *TWO_TARGETS]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "ranged 1.5",
+        "  linux-x86_64: ✓ → skipped (url)",
+        "1 package got worse.",
+    ]
+
+
+def test_diff_reports_a_new_skipped_package_as_a_new_gap(fake_pypi, tmp_path, capsys):
+    old, new = write_pair(tmp_path, "purewheel==3.1\n", "purewheel==3.1\nfoo @ git+https://github.com/example/foo@v1\n")
+    assert main([old, new, *TARGET]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "foo (url) (new)",
+        "  linux-x86_64: skipped (url)",
+        "1 new package has gaps.",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("foo @ git+https://github.com/example/foo@v1\n", "foo @ git+https://github.com/example/foo@v2\n"),
+        ("-e ./foo\n", "-e ./foo\n"),
+    ],
+)
+def test_diff_leaves_a_package_skipped_on_both_sides_alone(fake_pypi, tmp_path, capsys, old, new):
+    old, new = write_pair(tmp_path, old, new)
+    assert main([old, new, *TARGET]) == 0
+
+
+def test_diff_matches_a_requirements_path_by_its_path(fake_pypi, tmp_path, capsys):
+    old, new = write_pair(tmp_path, "ranged==1.5\n", "./ranged\n")
+    assert main([old, new, *TARGET]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "./ranged (path) (new)",
+        "  linux-x86_64: skipped (path)",
+        "1 new package has gaps.",
+    ]
+
+
+UV_HEAD = 'version = 1\nrevision = 3\nrequires-python = ">=3.12"\n\n'
+UV_PUREWHEEL = (
+    '[[package]]\nname = "purewheel"\nversion = "3.1"\nsource = { registry = "https://pypi.org/simple" }\n'
+    'wheels = [\n    { url = "https://files.pythonhosted.org/packages/aa/purewheel-3.1-py3-none-any.whl", '
+    'hash = "sha256:00", size = 1 },\n]\n\n'
+)
+GIT_SOURCE = '{ git = "https://github.com/e/purewheel?rev=abc#abc" }'
+UV_GIT = f'[[package]]\nname = "purewheel"\nversion = "3.2"\nsource = {GIT_SOURCE}\n\n'
+
+
+def uv_lock(deps):
+    root = '[[package]]\nname = "demo"\nversion = "0.1.0"\nsource = { editable = "." }\ndependencies = [\n'
+    return UV_HEAD + root + "".join(f"    {d},\n" for d in deps) + "]\n\n"
+
+
+def test_diff_follows_the_uv_lock_graph_for_skipped_packages(fake_pypi, tmp_path, capsys):
+    # The git build is only reached on Linux (the marker is on the edge, not the package), so Windows is unchanged.
+    old = uv_lock(['{ name = "purewheel" }']) + UV_PUREWHEEL
+    new = (
+        uv_lock(
+            [
+                """{ name = "purewheel", version = "3.1", source = { registry = "https://pypi.org/simple" }, """
+                """marker = "sys_platform == 'win32'" }""",
+                f"""{{ name = "purewheel", version = "3.2", source = {GIT_SOURCE}, """
+                """marker = "sys_platform != 'win32'" }""",
+            ]
+        )
+        + UV_PUREWHEEL
+        + UV_GIT
+    )
+    (tmp_path / "old").mkdir()
+    (tmp_path / "new").mkdir()
+    (tmp_path / "old" / "uv.lock").write_text(old)
+    (tmp_path / "new" / "uv.lock").write_text(new)
+    assert main([str(tmp_path / "old"), str(tmp_path / "new"), *TWO_TARGETS]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "purewheel 3.1 → 3.1, 3.2",
+        "  linux-x86_64: ✓ → skipped (git)",
+        "1 package got worse.",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("statuses", "expected"),
+    [
+        ((Status.WHEEL, Status.SOURCE), Status.SOURCE),
+        ((Status.MISSING, Status.SOURCE), Status.MISSING),
+        ((Status.MISSING, Status.UNKNOWN), Status.UNKNOWN),
+        ((Status.NOT_NEEDED, Status.WHEEL), Status.WHEEL),
+        ((Status.NOT_NEEDED, Status.NOT_NEEDED), Status.NOT_NEEDED),
+    ],
+)
+def test_merge_takes_the_worst_status_per_target(statuses, expected):
+    (t,) = make_targets("3.13", "linux-x86_64")
+    results = [Result("Ranged", str(i), {t: s}) for i, s in enumerate(statuses)]
+    (pkg,) = merge(results, [t]).values()
+    assert pkg.statuses[t] is expected
+    assert pkg.version == "0, 1"
 
 
 @pytest.mark.parametrize(

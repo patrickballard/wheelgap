@@ -14,8 +14,13 @@ How statuses rank, per target:
   `unknown` → `source` or `missing` is worse too. Only `unknown` → `wheel`, `bundled` or `n/a` is not.
   `unknown` on both sides counts as worse if the version changed; at the same version it's unchanged, and a
   note on stderr names those packages.
-- A package that NEW installs from somewhere wheelgap doesn't check (git, a path, a URL, an editable install
-  or a private index) can't be checked either, so on each target that installs it, it counts as worse.
+- A package installed from somewhere wheelgap doesn't check (git, a path, a URL, an editable install or a
+  private index) is "skipped" on that target and treated like `unknown`: anything → skipped is worse, and
+  skipped → `source` or `missing` is too. Skipped on both sides is unchanged. A new skipped package counts as
+  a new gap, except a uv `virtual` project, which installs nothing. This is decided per target, so a uv.lock
+  fork or marker split that is checked on one target and skipped on another is compared target by target.
+- A requirements-file path with no name (`./pkg`, or `-e ./pkg` without `#egg=`) is matched by its path, not
+  a package name: `ranged==1.5` → `./ranged` shows `./ranged` as a new gap (still exit 1), not as `ranged`.
 - A package listed more than once (a uv.lock fork) takes its worst status on each target, with `unknown`
   beating `missing`, and ignoring `n/a` unless every entry is `n/a`.
 """
@@ -25,7 +30,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from packaging.utils import canonicalize_name
 
@@ -48,20 +53,25 @@ GAPS = (Status.SOURCE, Status.MISSING, Status.UNKNOWN)
 
 @dataclass
 class Package:
-    """One package name on one side: its version(s) and its worst status per target."""
+    """One package name on one side: its version(s), its worst status per target, and the targets that
+    install it from outside the index (git, a path, a private index...), which aren't checked."""
 
     name: str
-    version: str
+    versions: list[str]
     statuses: dict[Target, Status]
+    skips: dict[Target, str] = field(default_factory=dict)
 
+    @property
+    def version(self) -> str:
+        if self.versions:
+            return ", ".join(self.versions)
+        return f"({', '.join(dict.fromkeys(self.skips.values()))})" if self.skips else "?"
 
-@dataclass
-class Skipped:
-    """A package one side installs from outside the index (git, path, private index...), so it isn't checked."""
+    def unchecked(self, t: Target) -> bool:
+        return t in self.skips or self.statuses[t] is Status.UNKNOWN
 
-    name: str
-    reason: str
-    targets: set[Target]
+    def cell(self, t: Target) -> str:
+        return f"skipped ({self.skips[t]})" if t in self.skips else CELL[self.statuses[t]][0]
 
 
 def merge(results: list[Result], targets: list[Target]) -> dict[str, Package]:
@@ -76,23 +86,24 @@ def merge(results: list[Result], targets: list[Target]) -> dict[str, Package]:
             found = [r.statuses.get(t, Status.NOT_NEEDED) for r in rs]
             needed = [s for s in found if s is not Status.NOT_NEEDED]
             statuses[t] = max(needed, key=RANK.__getitem__) if needed else Status.NOT_NEEDED
-        versions = dict.fromkeys(r.version or "?" for r in rs)
-        merged[key] = Package(rs[0].name, ", ".join(versions), statuses)
+        versions = list(dict.fromkeys(r.version or "?" for r in rs))
+        merged[key] = Package(rs[0].name, versions, statuses)
     return merged
 
 
-def skipped(source: Source, targets: list[Target]) -> dict[str, Skipped]:
-    """The source's skipped packages by canonical name, with the targets that install them (as check() decides)."""
+def add_skipped(packages: dict[str, Package], source: Source, targets: list[Target]) -> None:
+    """Add the source's skipped packages on the targets that install them, as check() decides that."""
     installed = {t: reachable(source, t) for t in targets} if source.edges is not None else None
-    out: dict[str, Skipped] = {}
     for i, pkg in enumerate(source.packages):
         if not pkg.skip:
             continue
-        on = {t for t in targets if (i in installed[t] if installed is not None else applies(pkg, t))}
-        if on:
-            entry = out.setdefault(pkg.key, Skipped(pkg.name, pkg.skip, set()))
-            entry.targets |= on
-    return out
+        on = [t for t in targets if (i in installed[t] if installed is not None else applies(pkg, t))]
+        if not on:
+            continue
+        entry = packages.setdefault(pkg.key, Package(pkg.name, [], dict.fromkeys(targets, Status.NOT_NEEDED)))
+        entry.skips.update(dict.fromkeys(on, pkg.skip))
+        if pkg.version and pkg.version not in entry.versions:
+            entry.versions.append(pkg.version)
 
 
 def worse(old: Status, new: Status) -> bool:
@@ -103,50 +114,51 @@ def worse(old: Status, new: Status) -> bool:
     return RANK[new] > RANK[old]
 
 
+def worse_on(was: Package, now: Package, t: Target) -> bool:
+    if t in now.skips:
+        return t not in was.skips  # skipped on both sides: neither was checked, so nothing changed
+    if t in was.skips:
+        return now.statuses[t] in GAPS  # like unknown → a status
+    if was.statuses[t] is Status.UNKNOWN and now.statuses[t] is Status.UNKNOWN:
+        return was.version != now.version  # a new release may have lost a wheel
+    return worse(was.statuses[t], now.statuses[t])
+
+
+def new_gap(pkg: Package, t: Target) -> bool:
+    if t in pkg.skips:
+        return pkg.skips[t] != "virtual"  # a uv virtual project installs nothing; anything else isn't checked
+    return pkg.statuses[t] in GAPS
+
+
 def compare(
-    old: list[Result], new: list[Result], targets: list[Target], new_skipped: dict[str, Skipped] | None = None
+    before: dict[str, Package], after: dict[str, Package], targets: list[Target]
 ) -> tuple[list[str], int, int, list[str]]:
     """The report lines, how many packages got worse, how many new packages have gaps, and the names
-    that couldn't be checked on either side."""
-    before, after = merge(old, targets), merge(new, targets)
-    new_skipped = new_skipped or {}
+    that couldn't be checked at the same version on either side."""
     multi_py = len({t.python for t in targets}) > 1
     lines: list[str] = []
     n_worse = n_new = 0
     unchecked = []
     for key, pkg in after.items():
         if key not in before:
-            gaps = [t for t in targets if pkg.statuses[t] in GAPS]
+            gaps = [t for t in targets if new_gap(pkg, t)]
             if gaps:
                 n_new += 1
                 lines.append(f"{pkg.name} {pkg.version} (new)")
-                lines += [f"  {t.label(multi_py)}: {CELL[pkg.statuses[t]][0]}" for t in gaps]
+                lines += [f"  {t.label(multi_py)}: {pkg.cell(t)}" for t in gaps]
             continue
         was = before[key]
-        same_version = pkg.version == was.version
-        changed = []
-        for t in targets:
-            o, n = was.statuses[t], pkg.statuses[t]
-            if o is Status.UNKNOWN and n is Status.UNKNOWN and same_version:
-                if pkg.name not in unchecked:
-                    unchecked.append(pkg.name)
-            elif worse(o, n) or (o is Status.UNKNOWN and n is Status.UNKNOWN):
-                changed.append(t)  # unknown at a new version: it may have lost a wheel, so don't call it unchanged
+        changed = [t for t in targets if worse_on(was, pkg, t)]
+        if any(
+            was.statuses[t] is Status.UNKNOWN and pkg.statuses[t] is Status.UNKNOWN and t not in changed
+            for t in targets
+        ):
+            unchecked.append(pkg.name)
         if changed:
             n_worse += 1
-            lines.append(f"{pkg.name} {pkg.version if same_version else f'{was.version} → {pkg.version}'}")
-            lines += [
-                f"  {t.label(multi_py)}: {CELL[was.statuses[t]][0]} → {CELL[pkg.statuses[t]][0]}" for t in changed
-            ]
-    for key, was in before.items():
-        # Gone from NEW's results: removed (fine), or now installed from somewhere that isn't checked.
-        if key in after or key not in new_skipped:
-            continue
-        skip = new_skipped[key]
-        on = [t for t in targets if t in skip.targets]
-        n_worse += 1
-        lines.append(f"{was.name} {was.version} → ({skip.reason})")
-        lines += [f"  {t.label(multi_py)}: {CELL[was.statuses[t]][0]} → skipped ({skip.reason})" for t in on]
+            version = pkg.version if pkg.version == was.version else f"{was.version} → {pkg.version}"
+            lines.append(f"{pkg.name} {version}")
+            lines += [f"  {t.label(multi_py)}: {was.cell(t)} → {pkg.cell(t)}" for t in changed]
     return lines, n_worse, n_new, unchecked
 
 
@@ -188,13 +200,17 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     try:
         targets = make_targets(args.python or None, args.target or None)
-        old, _ = _check_lockfile(args.old, targets, online=False, offline=False)
-        new, new_source = _check_lockfile(args.new, targets, online=False, offline=False)
+        sides = []
+        for path in (args.old, args.new):
+            results, source = _check_lockfile(path, targets, online=False, offline=False)
+            packages = merge(results, targets)
+            add_skipped(packages, source, targets)
+            sides.append(packages)
     except Exception as e:  # unknown targets, unreadable or malformed lockfiles
         print(f"wheelgap: error: {type(e).__name__}: {e}", file=sys.stderr)
         return 2
 
-    lines, n_worse, n_new, unchecked = compare(old, new, targets, skipped(new_source, targets))
+    lines, n_worse, n_new, unchecked = compare(sides[0], sides[1], targets)
     for line in lines:
         print(line)
     print(summary(n_worse, n_new))
