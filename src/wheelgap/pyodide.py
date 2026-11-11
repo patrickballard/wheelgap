@@ -107,15 +107,18 @@ def check_targets(lock: PyodideLock, targets: list[Target]) -> None:
         )
 
 
-def apply_bundled(rows: list[Row], targets: list[Target], lock: PyodideLock) -> None:
-    """Mark gaps on matching pyodide targets as BUNDLED when Pyodide ships the package itself.
+def bundles(lock: PyodideLock, key: str, target: Target, status: Status) -> bool:
+    """Whether a gap on this target counts as BUNDLED because Pyodide ships the package (canonical `key`) itself.
 
     Only SOURCE and MISSING become BUNDLED. UNKNOWN means the lookup failed (a typo'd pin, a network
     error), and that must stay a gap rather than pass because the name happens to be in the lock.
     """
+    return key in lock.packages and lock.applies_to(target) and status in (Status.SOURCE, Status.MISSING)
+
+
+def apply_bundled(rows: list[Row], targets: list[Target], lock: PyodideLock) -> None:
+    """Mark gaps on matching pyodide targets as BUNDLED when Pyodide ships the package itself."""
     for r in rows:
-        if r.package.key not in lock.packages:
-            continue
         for t in targets:
-            if lock.applies_to(t) and r.results[t] in (Status.SOURCE, Status.MISSING):
+            if bundles(lock, r.package.key, t, r.results[t]):
                 r.results[t] = Status.BUNDLED

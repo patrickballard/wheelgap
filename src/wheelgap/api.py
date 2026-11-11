@@ -19,6 +19,7 @@ from pathlib import Path
 
 from .check import Row, Status, check, status_for, wheel_tags
 from .offline import require_offline
+from .pyodide import PyodideLock, bundles
 from .pypi import fill_all, recheck_lock
 from .sources import Package, Source, find_lockfile, load_file, pythons_outside_lock
 from .targets import (
@@ -112,10 +113,13 @@ def check_packages(
     targets: Sequence[Target] | None = None,
     *,
     workers: int = 16,
+    pyodide_locks: Sequence[PyodideLock] = (),
 ) -> list[Result]:
     """Check several packages, looking their files up on the index in parallel.
 
     Each package is a name ("numpy", the latest release) or a (name, version) pair.
+    pyodide_locks (from wheelgap.pyodide.load_pyodide_lock) mark a package that a lock's Pyodide ships itself as
+    BUNDLED on pyodide targets for that lock's Python, where it would otherwise be SOURCE or MISSING.
     """
     targets = _package_targets(targets)
     if workers < 1:
@@ -124,9 +128,12 @@ def check_packages(
     for p in pkgs:
         p.origin = "api"
     fill_all(pkgs, workers=workers, python=single_python(targets))
-    return [
-        _result(p, {t: status_for(None if p.error else p.files, t, yanked=p.yanked) for t in targets}) for p in pkgs
-    ]
+    return [_result(p, {t: _status(p, t, pyodide_locks) for t in targets}) for p in pkgs]
+
+
+def _status(pkg: Package, target: Target, pyodide_locks: Sequence[PyodideLock]) -> Status:
+    status = status_for(None if pkg.error else pkg.files, target, yanked=pkg.yanked)
+    return Status.BUNDLED if any(bundles(lock, pkg.key, target, status) for lock in pyodide_locks) else status
 
 
 def check_package(

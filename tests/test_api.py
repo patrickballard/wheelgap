@@ -4,6 +4,7 @@ import pytest
 
 import wheelgap
 from wheelgap import Status
+from wheelgap.pyodide import load_pyodide_lock
 from wheelgap.sources import SourceError
 
 
@@ -80,6 +81,18 @@ def test_check_packages_mixes_names_and_pins(fake_pypi):
     assert by_name["nowheels"].statuses[targets[0]] is Status.SOURCE
     assert by_name["does-not-exist"].error == "not on index"
     assert by_name["does-not-exist"].statuses[targets[0]] is Status.UNKNOWN
+
+
+def test_check_packages_counts_what_pyodide_bundles(fake_pypi, fixtures):
+    lock = load_pyodide_lock(str(fixtures / "pyodide-lock.json"))  # Python 3.13
+    linux, pyodide = wheelgap.make_targets(python="3.13", platforms=["linux-x86_64", "pyodide"])
+    results = {
+        r.name: r for r in wheelgap.check_packages(["fastlib", "markupsafe"], [linux, pyodide], pyodide_locks=[lock])
+    }
+    assert results["fastlib"].statuses == {linux: Status.WHEEL, pyodide: Status.BUNDLED}
+    assert results["fastlib"].ok
+    # In the lock but not on the index: the failed lookup stays a gap.
+    assert results["markupsafe"].statuses[pyodide] is Status.UNKNOWN
 
 
 def test_check_lockfile_respects_markers_and_graph(fixtures):

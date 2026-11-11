@@ -298,6 +298,8 @@ for r in wheelgap.check_lockfile("uv.lock", targets):  # markers and the uv grap
 
 `check_packages([...])` checks many packages in parallel, and `check_package(..., files=[...])` works offline from filenames you already have.
 
+To count packages that Pyodide ships itself, as `--pyodide-lock` does, pass `check_packages([...], targets, pyodide_locks=[wheelgap.pyodide.load_pyodide_lock("pyodide-lock.json")])`. They show as `bundled` on pyodide targets for the lock's Python.
+
 ### Scanning the top PyPI packages
 
 ```bash
