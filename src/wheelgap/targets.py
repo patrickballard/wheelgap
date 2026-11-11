@@ -208,10 +208,10 @@ def resolve_platform(name: str) -> str:
     try:
         return _LOOKUP[_norm(name)]
     except KeyError:
-        matches = difflib.get_close_matches(name, [*PLATFORMS, *ALIASES], n=1)
+        # Match on normalized names, as the lookup does, so -t Linux_AARCH46 gets a suggestion too.
+        matches = difflib.get_close_matches(_norm(name), list(_LOOKUP), n=1)
         if matches:
-            suggestion = ALIASES.get(matches[0], matches[0])
-            raise TargetError(f"unknown target {name!r}; did you mean {suggestion!r}?") from None
+            raise TargetError(f"unknown target {name!r}; did you mean {_LOOKUP[matches[0]]!r}?") from None
         known = ", ".join(PLATFORMS)
         raise TargetError(f"unknown target {name!r} (known: {known})") from None
 

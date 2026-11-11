@@ -102,9 +102,11 @@ def test_unknown_platform():
         resolve_platform("solaris")
 
 
-def test_unknown_platform_suggests_a_close_name():
-    with pytest.raises(TargetError, match=r"unknown target 'linux-aarch46'; did you mean 'linux-aarch64'\?") as caught:
-        resolve_platform("linux-aarch46")
+@pytest.mark.parametrize("name", ["linux-aarch46", "Linux_AARCH46", "linux/aarch46"])
+def test_unknown_platform_suggests_a_close_name(name):
+    with pytest.raises(TargetError, match=r"; did you mean 'linux-aarch64'\?") as caught:
+        resolve_platform(name)
+    assert str(caught.value).startswith(f"unknown target {name!r}")
     assert "known:" not in str(caught.value)
 
 
