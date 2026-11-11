@@ -683,6 +683,48 @@ def refuse_pyodide_url(spec: str, how: str = "--offline") -> None:
         raise PyodideLockError(f"{how}: {spec} would be downloaded; save it and pass its path, or {undo_offline(how)}")
 
 
+def is_requirements_source(source: Source) -> bool:
+    """True for a requirements file (including .in and requirements*.lock), not lockfiles or CLI names."""
+    name = Path(source.label).name
+    if name == "command line":
+        return False
+    if name in ("uv.lock", "pylock.toml", "poetry.lock", "pdm.lock", "Pipfile.lock"):
+        return False
+    if name.startswith("pylock.") and name.endswith(".toml"):
+        return False
+    if name.endswith(".lock") and "uv" in name and not name.startswith("requirements"):
+        return False
+    return name.endswith((".txt", ".in")) or (name.startswith("requirements") and name.endswith(".lock"))
+
+
+def unpinned_requirement_names(source: Source) -> list[str]:
+    """Index requirements that aren't an exact pin. Skipped and non-index lines are omitted."""
+    names = []
+    for package in source.packages:
+        if package.skip:
+            continue
+        if package.version is None or package.spec:
+            names.append(package.name)
+    return names
+
+
+def note_unpinned_requirements(sources: list[Source]) -> None:
+    for source in sources:
+        if not is_requirements_source(source):
+            continue
+        names = unpinned_requirement_names(source)
+        if not names:
+            continue
+        noun = "package" if len(names) == 1 else "packages"
+        listed = ", ".join(names[:2]) + (", …" if len(names) > 2 else "")
+        print(
+            f"wheelgap: note: {source.label} has {len(names)} unpinned {noun} ({listed}), "
+            "so the newest matching release was checked; pin them (uv pip compile, pip-compile) "
+            "to check what you install",
+            file=sys.stderr,
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         # Don't crash printing ✓ to a non-UTF-8 pipe (e.g. Windows cp1252).
@@ -805,6 +847,9 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:  # malformed TOML and friends
         print(f"wheelgap: error: {type(e).__name__}: {e}", file=sys.stderr)
         return input_error_json(e) if args.json else 2
+
+    if not quiet:
+        note_unpinned_requirements(sources)
 
     needed_by_source = [selected_packages(source, targets) for source in sources]
     packages = [package for needed in needed_by_source for package in needed]
