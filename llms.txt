@@ -1,8 +1,8 @@
 # wheelgap
 
-> wheelgap is a Python command-line tool that reads a lockfile (`uv.lock`, `pylock.toml`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, `requirements.txt`) or package names and reports, for each package and each target Python and platform (Linux x86_64 and ARM, Alpine/musl, macOS, Windows on ARM, free-threaded 3.14t, Pyodide, iOS, Android), whether pip or uv would install a prebuilt wheel, build from source, or fail. Run it with `uvx wheelgap`, always pass `-p` and `-t`, and read `--json` and the exit code: `0` no gaps, `1` gaps found, `2` bad input.
+> wheelgap is a Python command-line tool that reads a lockfile (`uv.lock`, `pylock.toml`, `poetry.lock`, `pdm.lock`, `Pipfile.lock`, `requirements.txt`) or package names and reports, for each package and each target Python and platform (Linux x86_64 and ARM, Alpine/musl, macOS, Windows on ARM, free-threaded 3.14t, Pyodide, iOS, Android), whether pip or uv would install a prebuilt wheel, build from source, or fail. Run the newest release with `uvx wheelgap@latest` (plain `uvx wheelgap` can reuse an older installed or cached version), always pass `-p` and `-t`, and read `--json` and the exit code: `0` no gaps, `1` gaps found, `2` bad input.
 
-The README and docs on `main` can describe changes that aren't on PyPI yet; `CHANGELOG.md` lists them under "Unreleased". Check `uvx wheelgap --help` for the flags the released version has.
+The README and docs on `main` can describe changes that aren't on PyPI yet; `CHANGELOG.md` lists them under "Unreleased". Check `uvx wheelgap@latest --help` for the flags the released version has.
 
 ## Docs
 
@@ -12,7 +12,7 @@ The README and docs on `main` can describe changes that aren't on PyPI yet; `CHA
 - [Targets](https://github.com/wheelgap/wheelgap#targets): platform names and aliases, the wheel tags each accepts, `--glibc`, `--musl`, `--distro`
 - [How it works](https://github.com/wheelgap/wheelgap#how-it-works): what is read offline, what is looked up on PyPI, environment markers
 - [Recipes](https://github.com/wheelgap/wheelgap/blob/main/docs/recipes.md): multi-arch images, free-threading readiness, monorepos, agents and scripts
-- [JSON schema](https://github.com/wheelgap/wheelgap/blob/main/docs/wheelgap-output.schema.json): the shape of `--json` output on `main`; keys are added over time, never renamed or removed
+- [JSON schema](https://github.com/wheelgap/wheelgap/blob/main/docs/wheelgap-output.schema.json): the shape of `--json` output on `main`; later versions may add keys
 
 ## Integrations
 

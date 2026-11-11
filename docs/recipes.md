@@ -113,12 +113,15 @@ A coding agent or a script should read wheelgap's exit code and its `--json`
 output, not the table. Nothing needs installing:
 
 ```bash
-uvx wheelgap uv.lock -p 3.13 -t linux-x86_64,linux-aarch64 --json > wheelgap.json
+uvx wheelgap@latest uv.lock -p 3.13 -t linux-x86_64,linux-aarch64 --json > wheelgap.json
 ```
 
-- `uvx wheelgap` runs the latest release from PyPI (`pipx run wheelgap` works
-  too). Pin one, such as `uvx wheelgap@0.8.0`, when the result must not change
-  between runs, and check `uvx wheelgap --help` for the flags that release has.
+- `uvx wheelgap@latest` runs the newest release from PyPI. Plain
+  `uvx wheelgap` can run an older one: uv uses a version installed with
+  `uv tool install` unless a version is requested, and may reuse one from its
+  cache. Pin a release, such as `uvx wheelgap@0.8.0`, when the result must not
+  change between runs, and check `--help` on the same command for the flags
+  that release has. `pipx run wheelgap` works too.
 - Always pass `-p` and `-t`. Without them, the Python comes from a
   `.python-version` file or the interpreter wheelgap runs on, and the targets
   from `[tool.wheelgap]` or the built-in defaults, so the same command can check
@@ -133,9 +136,9 @@ uvx wheelgap uv.lock -p 3.13 -t linux-x86_64,linux-aarch64 --json > wheelgap.jso
 input (a missing lockfile, an unknown target, a bad `[tool.wheelgap]` value)
 prints `{"error": {"message": "...", "type": "..."}}` on stdout as well as the
 `wheelgap: error:` line on stderr. A command-line usage error, such as an
-unknown flag, is plain text on stderr only. `--exit-zero` always exits `0`, for
-informational runs; add `set -o pipefail` when you pipe the output, so input
-errors still fail.
+unknown flag, is plain text on stderr only. `--exit-zero` exits `0` even when
+gaps are found, for informational runs; bad input still exits `2`. Add
+`set -o pipefail` when you pipe the output, so input errors still fail.
 
 **Reading `--json`:** notes go to stderr, so stdout holds only the JSON.
 `packages` has one entry per package with its `name`, `version`, `error` and
@@ -157,7 +160,9 @@ Python example). Each result is one of:
 
 `skipped` lists packages that weren't checked (such as editable, path or Git
 dependencies), `ignored` the names matched by `--ignore`, and `summary` the
-counts. Keys are only ever added, never renamed or removed.
+counts. Later versions may add keys, so ignore any you don't know;
+[AGENTS.md](https://github.com/wheelgap/wheelgap/blob/main/AGENTS.md) tells
+contributors not to rename or remove them.
 
 **Why is it a gap?** `--explain` lists each rejected wheel and the reason. With
 `--json --explain`, each package also gets `rejected` and, for `uv.lock`, `via`
