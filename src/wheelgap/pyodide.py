@@ -6,6 +6,7 @@ import http.client
 import json
 import sys
 import urllib.error
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -105,6 +106,26 @@ def check_targets(lock: PyodideLock, targets: list[Target]) -> None:
             f"{lock.source} is for Python {py} (Pyodide {lock.pyodide_version}), "
             f"but no pyodide target uses Python {py} (pyodide targets: {have}); try -p {py} -t pyodide"
         )
+
+
+def check_locks(locks: Sequence[PyodideLock], targets: Sequence[Target]) -> None:
+    """Error unless each lock is for a different Python and some pyodide target uses it.
+
+    For the API and the scanner: a lock that applied to nothing would leave its packages as gaps without saying so,
+    and two locks for one Python would count packages that either release bundles.
+    """
+    seen: dict[tuple[int, int], str] = {}
+    for lock in locks:
+        py = f"{lock.python[0]}.{lock.python[1]}"
+        if lock.python in seen:
+            raise PyodideLockError(f"{seen[lock.python]} and {lock.source} are both for Python {py}; pass one")
+        seen[lock.python] = lock.source
+        if not any(lock.applies_to(t) for t in targets):
+            have = ", ".join(sorted({t.python for t in targets if PLATFORMS[t.platform][0] == "pyodide"})) or "none"
+            raise PyodideLockError(
+                f"{lock.source} is for Python {py} (Pyodide {lock.pyodide_version}), "
+                f"but no pyodide target uses Python {py} (pyodide targets: {have})"
+            )
 
 
 def bundles(lock: PyodideLock, key: str, target: Target, status: Status) -> bool:

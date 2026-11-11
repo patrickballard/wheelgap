@@ -19,7 +19,7 @@ from pathlib import Path
 
 from .check import Row, Status, check, status_for, wheel_tags
 from .offline import require_offline
-from .pyodide import PyodideLock, bundles
+from .pyodide import PyodideLock, bundles, check_locks
 from .pypi import fill_all, recheck_lock
 from .sources import Package, Source, find_lockfile, load_file, pythons_outside_lock
 from .targets import (
@@ -97,7 +97,11 @@ class Result:
         }
 
 
-def _result(pkg: Package, statuses: dict[Target, Status]) -> Result:
+def _result(pkg: Package, statuses: dict[Target, Status], pyodide_locks: Sequence[PyodideLock] = ()) -> Result:
+    statuses = {
+        t: Status.BUNDLED if any(bundles(lock, pkg.key, t, s) for lock in pyodide_locks) else s
+        for t, s in statuses.items()
+    }
     return Result(pkg.name, pkg.version, statuses, tuple(pkg.files or ()), pkg.error)
 
 
@@ -118,22 +122,23 @@ def check_packages(
     """Check several packages, looking their files up on the index in parallel.
 
     Each package is a name ("numpy", the latest release) or a (name, version) pair.
-    pyodide_locks (from wheelgap.pyodide.load_pyodide_lock) mark a package that a lock's Pyodide ships itself as
-    BUNDLED on pyodide targets for that lock's Python, where it would otherwise be SOURCE or MISSING.
+    pyodide_locks (from wheelgap.pyodide.load_pyodide_lock, one per Python) mark a package that a lock's Pyodide
+    ships itself as BUNDLED on pyodide targets for that lock's Python, where it would otherwise be SOURCE or MISSING.
+    As with --pyodide-lock, a lock whose Python no pyodide target uses raises PyodideLockError (a ValueError) before
+    any lookup, and so do two locks for the same Python.
     """
     targets = _package_targets(targets)
     if workers < 1:
         raise ValueError("workers must be at least 1")
+    check_locks(pyodide_locks, targets)
     pkgs = [Package(p, None) if isinstance(p, str) else Package(p[0], p[1]) for p in packages]
     for p in pkgs:
         p.origin = "api"
     fill_all(pkgs, workers=workers, python=single_python(targets))
-    return [_result(p, {t: _status(p, t, pyodide_locks) for t in targets}) for p in pkgs]
-
-
-def _status(pkg: Package, target: Target, pyodide_locks: Sequence[PyodideLock]) -> Status:
-    status = status_for(None if pkg.error else pkg.files, target, yanked=pkg.yanked)
-    return Status.BUNDLED if any(bundles(lock, pkg.key, target, status) for lock in pyodide_locks) else status
+    return [
+        _result(p, {t: status_for(None if p.error else p.files, t, yanked=p.yanked) for t in targets}, pyodide_locks)
+        for p in pkgs
+    ]
 
 
 def check_package(
@@ -142,13 +147,19 @@ def check_package(
     targets: Sequence[Target] | None = None,
     *,
     files: Iterable[str] | None = None,
+    pyodide_locks: Sequence[PyodideLock] = (),
 ) -> Result:
-    """Check one package. Pass `files` (distribution filenames) to skip the index lookup."""
+    """Check one package. Pass `files` (distribution filenames) to skip the index lookup.
+
+    pyodide_locks work as in check_packages().
+    """
     if files is None:
-        return check_packages([(name, version)], targets)[0]
+        return check_packages([(name, version)], targets, pyodide_locks=pyodide_locks)[0]
     targets = _package_targets(targets)
-    names = list(files)
-    return Result(name, version, {t: status_for(names, t) for t in targets}, tuple(names))
+    check_locks(pyodide_locks, targets)
+    pkg = Package(name, version)
+    pkg.files = list(files)
+    return _result(pkg, {t: status_for(pkg.files, t) for t in targets}, pyodide_locks)
 
 
 def check_lockfile(
@@ -157,6 +168,7 @@ def check_lockfile(
     *,
     online: bool = False,
     offline: bool = False,
+    pyodide_locks: Sequence[PyodideLock] = (),
 ) -> list[Result]:
     """Check every package a lockfile (or a project directory) installs on at least one target.
 
@@ -166,10 +178,12 @@ def check_lockfile(
     With offline=True, only locked files are used: inputs needing an index lookup raise SourceError, and the
     other-Python recheck is skipped. Locked files may therefore omit wheels for those Python versions.
     online=True and offline=True cannot be combined.
+    pyodide_locks work as in check_packages(), and are checked before the lockfile is read.
     """
     targets = _package_targets(targets)
     if online and offline:
         raise ValueError("online=True and offline=True cannot be combined")
+    check_locks(pyodide_locks, targets)
     p = Path(path)
     source: Source = load_file(find_lockfile(p) if p.is_dir() else p)
     if offline:
@@ -178,4 +192,4 @@ def check_lockfile(
     if not online and not offline and pythons_outside_lock(source, targets):
         recheck_lock(source.packages)
     rows: list[Row] = [r for r in check([source], targets) if r.needed]
-    return [_result(r.package, dict(r.results)) for r in rows]
+    return [_result(r.package, dict(r.results), pyodide_locks) for r in rows]

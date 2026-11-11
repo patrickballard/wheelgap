@@ -3,8 +3,9 @@
     python -m wheelgap.scan --top 5000 --out coverage.json
 
 Each package's latest release is checked against every native platform, plus Pyodide where
-there's a Pyodide build of that Python. The output is one JSON document (schema below) with
-per-target totals, so a website or a later scan can diff it.
+there's a Pyodide build of that Python. With --pyodide-lock (one per Pyodide release), packages
+that Pyodide ships itself count as `bundled` on that release's Python. The output is one JSON
+document (schema below) with per-target totals, so a website or a later scan can diff it.
 """
 
 from __future__ import annotations
@@ -14,12 +15,14 @@ import json
 import sys
 import time
 from collections import Counter
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
 from . import __version__
 from .api import Result, check_packages
 from .check import Status
+from .pyodide import PyodideLock, PyodideLockError, check_locks, load_pyodide_lock
 from .pypi import fetch_json
 from .targets import NATIVE_PLATFORMS, PYODIDE_PLATFORMS, Target, TargetError, build_targets, parse_python
 
@@ -54,13 +57,16 @@ def summarise(results: list[Result], targets: list[Target]) -> dict[str, dict[st
     for t in targets:
         counts = Counter(r.statuses[t].value for r in results)
         summary[t.label(True)] = {
-            s.value: counts.get(s.value, 0) for s in (Status.WHEEL, Status.SOURCE, Status.MISSING, Status.UNKNOWN)
+            s.value: counts.get(s.value, 0)
+            for s in (Status.WHEEL, Status.SOURCE, Status.MISSING, Status.UNKNOWN, Status.BUNDLED)
         }
     return summary
 
 
-def scan(rows: list[dict], targets: list[Target], workers: int = 16) -> list[Result]:
-    return check_packages([r["project"] for r in rows], targets, workers=workers)
+def scan(
+    rows: list[dict], targets: list[Target], workers: int = 16, pyodide_locks: Sequence[PyodideLock] = ()
+) -> list[Result]:
+    return check_packages([r["project"] for r in rows], targets, workers=workers, pyodide_locks=pyodide_locks)
 
 
 def report(
@@ -121,6 +127,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--workers", type=positive_int, default=16, help="parallel index lookups (default: 16)")
     p.add_argument("--out", metavar="PATH", help="write here instead of stdout")
     p.add_argument(
+        "--pyodide-lock",
+        action="append",
+        default=[],
+        metavar="PATH_OR_URL",
+        help="a Pyodide release's pyodide-lock.json: packages it ships count as bundled (repeat, one per Python)",
+    )
+    p.add_argument(
         "--max-error-rate",
         type=float,
         default=0.05,
@@ -136,8 +149,13 @@ def main(argv: list[str] | None = None) -> int:
         p.error(f"argument --python: {error}")
     if not targets:
         p.error("argument --python: provide at least one Python version")
+    try:
+        pyodide_locks = [load_pyodide_lock(spec) for spec in args.pyodide_lock]
+        check_locks(pyodide_locks, targets)
+    except (OSError, PyodideLockError) as error:
+        p.error(f"argument --pyodide-lock: {error}")
     rows, last_update = load_top(args.top_packages, args.top)
-    results = scan(rows, targets, args.workers)
+    results = scan(rows, targets, args.workers, pyodide_locks)
     data = report(rows, results, targets, args.top_packages, last_update)
 
     errors = data["lookup_errors"]

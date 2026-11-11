@@ -4,7 +4,7 @@ import pytest
 
 import wheelgap
 from wheelgap import Status
-from wheelgap.pyodide import load_pyodide_lock
+from wheelgap.pyodide import PyodideLockError, load_pyodide_lock
 from wheelgap.sources import SourceError
 
 
@@ -93,6 +93,54 @@ def test_check_packages_counts_what_pyodide_bundles(fake_pypi, fixtures):
     assert results["fastlib"].ok
     # In the lock but not on the index: the failed lookup stays a gap.
     assert results["markupsafe"].statuses[pyodide] is Status.UNKNOWN
+
+
+def test_check_package_counts_what_pyodide_bundles(fake_pypi, fixtures):
+    lock = load_pyodide_lock(str(fixtures / "pyodide-lock.json"))
+    linux, pyodide = wheelgap.make_targets(python="3.13", platforms=["linux-x86_64", "pyodide"])
+    looked_up = wheelgap.check_package("fastlib", targets=[linux, pyodide], pyodide_locks=[lock])
+    assert looked_up.statuses == {linux: Status.WHEEL, pyodide: Status.BUNDLED}
+    offline = wheelgap.check_package(
+        "MarkupSafe", "3.0.2", [linux, pyodide], files=["markupsafe-3.0.2.tar.gz"], pyodide_locks=[lock]
+    )
+    assert offline.statuses == {linux: Status.SOURCE, pyodide: Status.BUNDLED}
+    assert offline.files == ("markupsafe-3.0.2.tar.gz",) and offline.gaps == [linux]
+
+
+def test_check_lockfile_counts_what_pyodide_bundles(fake_pypi, fixtures, tmp_path):
+    lock = load_pyodide_lock(str(fixtures / "pyodide-lock.json"))
+    (tmp_path / "requirements.txt").write_text("fastlib==2.0.0\nnowheels==0.9\n")
+    linux, pyodide = wheelgap.make_targets(python="3.13", platforms=["linux-x86_64", "pyodide"])
+    results = {
+        r.name: r
+        for r in wheelgap.check_lockfile(tmp_path / "requirements.txt", [linux, pyodide], pyodide_locks=[lock])
+    }
+    assert results["fastlib"].statuses == {linux: Status.WHEEL, pyodide: Status.BUNDLED}
+    assert results["nowheels"].statuses == {linux: Status.SOURCE, pyodide: Status.MISSING}  # not in the lock
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        lambda **kw: wheelgap.check_packages(["fastlib"], **kw),
+        lambda **kw: wheelgap.check_package("fastlib", **kw),
+        lambda **kw: wheelgap.check_package("fastlib", files=["fastlib-2.0.0.tar.gz"], **kw),
+        lambda **kw: wheelgap.check_lockfile("missing-uv.lock", **kw),
+    ],
+)
+@pytest.mark.parametrize(
+    ("python", "copies", "message"),
+    [
+        ("3.12", 1, "no pyodide target uses Python 3.13 .pyodide targets: 3.12"),
+        ("3.13", 2, "are both for Python 3.13"),
+    ],
+)
+def test_pyodide_locks_that_cant_apply_raise_before_lookup(fake_pypi, fixtures, check, python, copies, message):
+    lock = load_pyodide_lock(str(fixtures / "pyodide-lock.json"))
+    targets = wheelgap.make_targets(python=python, platforms=["linux-x86_64", "pyodide"])
+    with pytest.raises(PyodideLockError, match=message):
+        check(targets=targets, pyodide_locks=[lock] * copies)
+    assert not fake_pypi
 
 
 def test_check_lockfile_respects_markers_and_graph(fixtures):
