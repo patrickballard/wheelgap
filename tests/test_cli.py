@@ -1,10 +1,13 @@
 import json
+import platform
 import sys
 import sysconfig
 from pathlib import Path
 
+import packaging
 import pytest
 
+import wheelgap
 from wheelgap import cli
 from wheelgap.check import Status
 from wheelgap.cli import main
@@ -1613,6 +1616,7 @@ def test_version_includes_packaging(capsys):
         main(["--version"])
     assert caught.value.code == 0
     out, err = capsys.readouterr()
-    assert out.startswith("wheelgap ")
-    assert "packaging " in out
+    free_threaded = "t" if sysconfig.get_config_var("Py_GIL_DISABLED") else ""
+    python = f"{platform.python_implementation()} {platform.python_version()}{free_threaded}"
+    assert out == f"wheelgap {wheelgap.__version__} (packaging {packaging.__version__}, {python})\n"
     assert not err
