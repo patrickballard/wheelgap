@@ -22,7 +22,7 @@ from pathlib import Path
 from . import __version__
 from .api import Result, check_packages
 from .check import Status
-from .pyodide import PyodideLock, PyodideLockError, check_locks, load_pyodide_lock
+from .pyodide import PyodideLock, check_locks, load_pyodide_lock
 from .pypi import fetch_json
 from .targets import NATIVE_PLATFORMS, PYODIDE_PLATFORMS, Target, TargetError, build_targets, parse_python
 
@@ -152,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pyodide_locks = [load_pyodide_lock(spec) for spec in args.pyodide_lock]
         check_locks(pyodide_locks, targets)
-    except (OSError, PyodideLockError) as error:
+    except (OSError, ValueError) as error:  # PyodideLockError and UnicodeDecodeError are ValueErrors
         p.error(f"argument --pyodide-lock: {error}")
     rows, last_update = load_top(args.top_packages, args.top)
     results = scan(rows, targets, args.workers, pyodide_locks)
