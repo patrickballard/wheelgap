@@ -534,6 +534,8 @@ def test_python_imports_in_heredocs_are_not_from_lines(tmp_path):
         "FROM python:3.12-slim AS base\nFROM python:3.13-alpine\nRUN rm -rf /tmp/* \\\n# note\nFROM base\n",
         # With `# escape=` + "`", a trailing backtick continues the line (and a backslash doesn't).
         "# escape=`\nFROM python:3.12-windowsservercore AS base\nFROM python:3.13-alpine\nRUN echo `\nFROM base\n",
+        # A line of Go whitespace (U+3000 is unicode.IsSpace) is blank too, so FROM base is still part of the RUN.
+        "FROM python:3.12-slim AS base\nFROM python:3.13-alpine\nRUN rm -rf /tmp/* \\\n\u3000\nFROM base\n",
     ],
 )
 def test_continuations_like_docker(tmp_path, text):
@@ -549,6 +551,10 @@ def test_continuations_like_docker(tmp_path, text):
         "FROM python:3.13-alpine AS app\nRUN echo \\\\\nFROM python:3.12-slim\n",
         # Under `# escape=` + "`", a trailing backslash is just a character.
         "# escape=`\nFROM python:3.13-alpine AS app\nRUN dir C:\\\nFROM python:3.12-slim\n",
+        # \x1c-\x1f aren't Go's unicode.IsSpace, so a \x1c-only line isn't blank to Docker: it ends the RUN.
+        "FROM python:3.13-alpine AS app\nRUN echo \\\n\x1c\nFROM python:3.12-slim\n",
+        # Nor is a \x1f before # a comment line: the RUN ends there too.
+        "FROM python:3.13-alpine AS app\nRUN echo \\\n\x1f# note\nFROM python:3.12-slim\n",
     ],
 )
 def test_lines_that_do_not_continue(tmp_path, text):
@@ -653,6 +659,9 @@ def test_escape_directive_rules(tmp_path):
         ],
         # Outside a heredoc, a Python import is a FROM with the wrong arguments.
         ("FROM python:3.13\nfrom app import main\n", "expected 'IMAGE' or 'IMAGE AS NAME'"),
+        # Docker trims only unicode.IsSpace, so \x1cFROM is an unknown instruction to it, as FROM\x1d is.
+        ("FROM python:3.12-slim\n\x1cFROM python:3.13-alpine\n", "unknown instruction '\\\\x1cFROM'"),
+        ("FROM python:3.12-slim\nFROM\x1d python:3.13-alpine\n", "unknown instruction 'FROM\\\\x1d'"),
     ],
 )
 def test_dockerfiles_docker_rejects(tmp_path, text, message):
