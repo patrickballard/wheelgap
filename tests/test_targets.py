@@ -111,6 +111,8 @@ def test_unknown_platform():
         ("linx-x86_64", "linux-x86_64"),
         ("musl-aarch46", "musl-aarch64"),
         ("pyodid", "pyodide"),
+        ("linuxaarch64", "linux-aarch64"),
+        ("linux-aarch-64", "linux-aarch64"),
     ],
 )
 def test_unknown_platform_suggests_a_close_name(name, suggestion):
@@ -130,6 +132,12 @@ def test_unknown_platform_suggests_a_close_name(name, suggestion):
         "darwin-arm64",
         "linux-riscv32",
         "linux-armv6",
+        "linux-armv8",
+        "linux-ppc64be",
+        "linux-aarch32",
+        "linux-armel",
+        "win-arm64ec",
+        "macos-arm64e",
         "x86_64",
         "aarch64",
         "linux/arm46",
