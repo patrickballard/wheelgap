@@ -109,6 +109,10 @@ class Source:
     # by the groups Poetry records on them.
     poetry_tables: list[dict] | None = None
     poetry_pyproject: Path | None = None
+    # pdm.lock only: each package's `groups` list (None for a package that records none, as before PDM 2.x),
+    # kept so --group/--only-group/--no-dev can pick packages. None when the input isn't a pdm.lock.
+    pdm_groups: list[list[str] | None] | None = None
+    pdm_pyproject: Path | None = None
     # poetry.lock after a group selection: the packages it left out, which were still read (for --ignore notes).
     unselected_keys: set[str] = field(default_factory=set)
 
@@ -245,12 +249,19 @@ def select_uv_dependencies(
         raise SourceError("--no-dev cannot be combined with an explicit dev group")
     if strict and (not sources or any(source.uv_packages is None for source in sources)):
         others = [source for source in sources if source.uv_packages is None]
-        if sources and all(source.poetry_tables is not None for source in others):
+        if sources and all(source.poetry_tables is not None or source.pdm_groups is not None for source in others):
             if selection.all_extras or (selection.extras and not configured_extras):
-                raise SourceError("extra selection requires uv.lock inputs (poetry.lock supports groups only)")
+                raise SourceError(
+                    "extra selection requires uv.lock inputs (poetry.lock and pdm.lock support groups only)"
+                )
         else:
             raise SourceError("extra/group selection requires uv.lock inputs")
     for source in sources:
+        if source.pdm_groups is not None:
+            # A lock that records no package groups (before PDM 2.x): configured groups leave it as it is.
+            if poetry and (strict or all(g is not None for g in source.pdm_groups)):
+                _select_pdm_groups(source, selection)
+            continue
         if source.poetry_tables is not None:
             # A Poetry 1.x lock doesn't record groups per package; configured groups leave it as it is.
             if poetry and (strict or source.edges is None):
@@ -339,6 +350,45 @@ def _select_poetry_groups(source: Source, selection: UvSelection) -> None:
             source.unselected_keys.add(pkg.key)
     source.packages = kept
     source.poetry_tables = None
+
+
+def _select_pdm_groups(source: Source, selection: UvSelection) -> None:
+    """Keep the pdm.lock packages that `pdm install` would install for `selection`, with PDM's meanings: `default`
+    and every dev group by default, `--group` adds a group (like `pdm install -G`; the [project]
+    optional-dependencies groups count only then), `--no-dev` leaves out `dev`, and `--only-group` installs only
+    the named groups (`default` too only if named)."""
+    per_package = source.pdm_groups or []
+    if any(g is None for g in per_package):
+        raise SourceError(f"{source.label}: group selection needs a pdm.lock that records package groups")
+    package_groups = [[canonicalize_name(g) for g in groups or []] for groups in per_package]
+    known = {"default"} | {g for groups in package_groups for g in groups}
+    optional: set[str] = set()
+    pyproject = source.pdm_pyproject
+    if pyproject is not None and pyproject.is_file():
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        extras = data.get("project", {}).get("optional-dependencies")
+        optional = {canonicalize_name(name) for name in (extras if isinstance(extras, dict) else {})}
+        # Dev groups that lock no package are still known groups.
+        for table in (data.get("dependency-groups"), data.get("tool", {}).get("pdm", {}).get("dev-dependencies")):
+            known.update(canonicalize_name(name) for name in (table if isinstance(table, dict) else {}))
+        known |= optional
+    unknown = (selection.groups | selection.only_groups) - known
+    if unknown:
+        raise SourceError(f"{source.label}: unknown groups: {', '.join(sorted(unknown))}")
+    if selection.only_groups:
+        chosen = set(selection.only_groups | selection.groups)
+    else:
+        chosen = (known - optional) | selection.groups
+    if selection.no_dev:
+        chosen.discard("dev")
+    kept = []
+    for pkg, groups in zip(source.packages, package_groups, strict=True):
+        if any(g in chosen for g in groups):
+            kept.append(pkg)
+        else:
+            source.unselected_keys.add(pkg.key)
+    source.packages = kept
+    source.pdm_groups = None
 
 
 def parse_pylock(path: Path) -> Source:
@@ -543,8 +593,15 @@ def parse_pdm_lock(path: Path) -> Source:
     legacy_files = data.get("metadata", {}).get("files", {})
     pkgs: list[Package] = []
     seen: dict[tuple[str, str | None], Package] = {}
+    # Each package's groups, merged over its entries (PDM writes one per extras variant).
+    groups: dict[tuple[str, str | None], list[str] | None] = {}
     for p in data.get("package", []):
         pkg = Package(p["name"], p.get("version"), origin=path.name)
+        recorded = p.get("groups")
+        recorded = [g for g in recorded if isinstance(g, str)] if isinstance(recorded, list) else None
+        key = (pkg.key, pkg.version)
+        before = groups.get(key, [])
+        groups[key] = None if recorded is None or (key in groups and before is None) else [*(before or []), *recorded]
         if p.get("marker"):
             pkg.markers = [p["marker"]]
         src_type = next((k for k in ("git", "hg", "svn", "bzr", "path", "url", "file") if k in p), None)
@@ -569,7 +626,12 @@ def parse_pdm_lock(path: Path) -> Source:
                 pkg.files = [f for f in (_filename(e) for e in entries) if f]
             # Not in either place: leave files as None so the PyPI lookup fills them in.
         _add_once(pkgs, seen, pkg)
-    return Source(path.name, pkgs)
+    return Source(
+        path.name,
+        pkgs,
+        pdm_groups=[groups[(pkg.key, pkg.version)] for pkg in pkgs],
+        pdm_pyproject=path.parent / "pyproject.toml",
+    )
 
 
 def parse_pipfile_lock(path: Path) -> Source:

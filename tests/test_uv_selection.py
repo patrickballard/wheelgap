@@ -536,7 +536,7 @@ def test_poetry_lock_unknown_group_is_an_error(poetry_groups, capsys, fake_pypi)
 
 def test_poetry_lock_rejects_extras(poetry_groups, capsys, fake_pypi):
     assert main([str(poetry_groups), "--extra", "api"]) == 2
-    assert "poetry.lock supports groups only" in capsys.readouterr().err
+    assert "poetry.lock and pdm.lock support groups only" in capsys.readouterr().err
 
 
 def test_poetry_lock_configured_groups_apply(poetry_groups, capsys, fake_pypi):
@@ -586,3 +586,122 @@ def test_poetry_1x_lock_ignores_configured_groups(tmp_path, capsys, fake_pypi):
     # No per-package groups to select by, so every package stays in.
     code, names = _poetry_names(capsys, [str(tmp_path)])
     assert code == 1 and names == {"app-dep", "devonly"}
+
+
+PDM_GROUPS_LOCK = """\
+[metadata]
+groups = ["default", "dev", "docs"]
+strategy = ["inherit_metadata"]
+lock_version = "4.5.0"
+content_hash = "sha256:00"
+
+[[package]]
+name = "app-dep"
+version = "1.0"
+groups = ["default"]
+files = [{file = "app_dep-1.0-py3-none-any.whl", hash = "sha256:00"}]
+
+[[package]]
+name = "devonly"
+version = "1.0"
+groups = ["dev"]
+files = [{file = "devonly-1.0.tar.gz", hash = "sha256:00"}]
+
+[[package]]
+name = "docstool"
+version = "1.0"
+groups = ["docs"]
+files = [{file = "docstool-1.0.tar.gz", hash = "sha256:00"}]
+
+[[package]]
+name = "shared"
+version = "1.0"
+groups = ["dev"]
+files = [{file = "shared-1.0.tar.gz", hash = "sha256:00"}]
+
+[[package]]
+name = "shared"
+version = "1.0"
+extras = ["toml"]
+groups = ["default"]
+files = [{file = "shared-1.0.tar.gz", hash = "sha256:00"}]
+"""
+
+PDM_GROUPS_PYPROJECT = """\
+[project]
+name = "app"
+version = "0"
+dependencies = ["app-dep", "shared[toml]"]
+
+[project.optional-dependencies]
+docs = ["docstool"]
+
+[dependency-groups]
+dev = ["devonly", "shared"]
+lint = []
+"""
+
+
+@pytest.fixture
+def pdm_groups(tmp_path):
+    (tmp_path / "pdm.lock").write_text(PDM_GROUPS_LOCK, encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(PDM_GROUPS_PYPROJECT, encoding="utf-8")
+    return tmp_path
+
+
+def test_pdm_lock_no_dev_drops_a_dev_only_gap(pdm_groups, capsys, fake_pypi):
+    code, names = _poetry_names(capsys, [str(pdm_groups)])
+    assert code == 1 and names == {"app-dep", "devonly", "docstool", "shared"}  # unchanged without a selector
+    code, names = _poetry_names(capsys, [str(pdm_groups), "--no-dev"])
+    # docs is a [project] optional-dependencies group, which `pdm install` leaves out unless asked for (-G).
+    # shared stays: its shared[toml] entry is in the default group.
+    assert code == 1 and names == {"app-dep", "shared"}
+    assert fake_pypi == []
+
+
+def test_pdm_lock_group_adds_an_optional_group(pdm_groups, capsys, fake_pypi):
+    code, names = _poetry_names(capsys, [str(pdm_groups), "--no-dev", "--group", "docs"])
+    assert code == 1 and names == {"app-dep", "docstool", "shared"}
+
+
+def test_pdm_lock_only_group_keeps_only_it(pdm_groups, capsys, fake_pypi):
+    code, names = _poetry_names(capsys, [str(pdm_groups), "--only-group", "dev"])
+    assert code == 1 and names == {"devonly", "shared"}
+    code, names = _poetry_names(capsys, [str(pdm_groups), "--only-group", "default"])
+    assert code == 1 and names == {"app-dep", "shared"}
+    # An empty group declared in pyproject.toml is known, and selects nothing.
+    code, names = _poetry_names(capsys, [str(pdm_groups), "--only-group", "lint"])
+    assert code == 0 and names == set()
+
+
+def test_pdm_lock_unknown_group_is_an_error(pdm_groups, capsys, fake_pypi):
+    assert main([str(pdm_groups), "--group", "nosuch"]) == 2
+    assert "unknown groups: nosuch" in capsys.readouterr().err
+
+
+def test_pdm_lock_rejects_extras(pdm_groups, capsys, fake_pypi):
+    assert main([str(pdm_groups), "--extra", "docs"]) == 2
+    assert "poetry.lock and pdm.lock support groups only" in capsys.readouterr().err
+
+
+def test_pdm_lock_configured_groups_apply(pdm_groups, capsys, fake_pypi):
+    with (pdm_groups / "pyproject.toml").open("a", encoding="utf-8") as f:
+        f.write('\n[tool.wheelgap]\ngroups = ["docs"]\n')
+    code, names = _poetry_names(capsys, [str(pdm_groups), "--no-dev"])
+    assert code == 1 and names == {"app-dep", "docstool", "shared"}
+
+
+def test_pdm_lock_without_package_groups(tmp_path, capsys, fake_pypi):
+    (tmp_path / "pdm.lock").write_text(
+        '[[package]]\nname = "app-dep"\nversion = "1.0"\n'
+        'files = [{file = "app_dep-1.0-py3-none-any.whl", hash = "sha256:00"}]\n\n'
+        '[[package]]\nname = "devonly"\nversion = "1.0"\n'
+        'files = [{file = "devonly-1.0.tar.gz", hash = "sha256:00"}]\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "pyproject.toml").write_text('[tool.wheelgap]\ngroups = ["docs"]\n', encoding="utf-8")
+    # Configured groups leave it unfiltered; a command-line selection is an error.
+    code, names = _poetry_names(capsys, [str(tmp_path)])
+    assert code == 1 and names == {"app-dep", "devonly"}
+    assert main([str(tmp_path), "--no-dev"]) == 2
+    assert "needs a pdm.lock that records package groups" in capsys.readouterr().err
