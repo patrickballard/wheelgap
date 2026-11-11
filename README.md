@@ -207,8 +207,8 @@ including local workspace dependencies, rather than enabling every extra of ever
 Unresolved marker conditions (including uv's synthetic conflict markers and unknown OS releases)
 remain conservative: wheelgap can still report a possible gap rather than silently hide one.
 Selection itself needs no network. Index refreshes (`--online`, or a target outside the lockfile's
-`requires-python`) only look up packages in the selected graph. Configured `extras` and `groups` only apply to `uv.lock` inputs; other inputs
-are checked as usual.
+`requires-python`) only look up packages in the selected graph. Configured `extras` only apply to `uv.lock` inputs, and configured `groups` to `uv.lock` and Poetry 2.x
+`poetry.lock` inputs; other inputs are checked as usual.
 
 ### Check a library's direct dependencies
 

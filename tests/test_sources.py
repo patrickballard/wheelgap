@@ -791,6 +791,10 @@ def test_pyproject_unknown_extra(tmp_path):
             '[project]\nname = "x"\n\n[tool.poetry.dependencies]\npython = ">=3.10"\nnumpy = "^2"\n',
             "dependencies are in \\[tool.poetry.dependencies\\].*check poetry.lock",
         ),
+        (
+            '[project]\nname = "x"\ndependencies = []\n\n[tool.poetry.dependencies]\nnumpy = "^2"\n',
+            "dependencies are in \\[tool.poetry.dependencies\\].*check poetry.lock",
+        ),
         ('[project]\nname = "x"\n[project.optional-dependencies]\nTest = ["a"]\ntest = ["b"]\n', "PEP 685"),
         ('[project]\nname = "x"\ndependencies = ["x[nope]"]\n', "names unknown extras: nope"),
         ('[project]\nname = "x"\ndependencies = ["x[a]"]\ndynamic = ["optional-dependencies"]\n', "is dynamic"),

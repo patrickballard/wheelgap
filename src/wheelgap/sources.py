@@ -644,8 +644,9 @@ def parse_pyproject(path: Path) -> Source:
             f"{path}: [project] dependencies is dynamic (set by the build backend), so wheelgap can't read it; "
             "check a lockfile instead"
         )
-    if "dependencies" not in project:
-        # Poetry 2 builds [tool.poetry.dependencies] into the package when [project] has no dependencies.
+    if not project.get("dependencies") and not project.get("optional-dependencies"):
+        # poetry-core 2 builds [tool.poetry.dependencies] into the package whenever [project] lists no dependencies
+        # or optional-dependencies (missing or empty: DependencyGroup.dependencies' "legacy mode").
         tool = data.get("tool")
         poetry = tool.get("poetry") if isinstance(tool, dict) else None
         poetry_deps = poetry.get("dependencies") if isinstance(poetry, dict) else None
