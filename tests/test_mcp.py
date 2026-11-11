@@ -709,3 +709,17 @@ def test_a_crash_on_the_worker_is_still_answered(monkeypatch):
     (_, reply) = run(init(), call("list_targets"))
     assert reply["id"] == 1
     assert reply["error"]["code"] == mcp.INTERNAL_ERROR
+
+
+def test_check_dockerfile_without_a_lockfile_next_to_it_says_to_pass_path(tmp_path):
+    (tmp_path / "Dockerfile").write_text("FROM python:3.13-alpine\n", encoding="utf-8")
+    (_, reply) = run(init(), call("check_dockerfile", dockerfile=str(tmp_path / "Dockerfile")))
+    assert reply["result"]["isError"] is True
+    assert "pass 'path'" in reply["result"]["content"][0]["text"]
+
+
+def test_check_dockerfile_errors_carry_no_cli_advice_where_none_applies(tmp_path):
+    (tmp_path / "Dockerfile").write_text("RUN echo hi\n", encoding="utf-8")
+    (_, reply) = run(init(), call("check_dockerfile", dockerfile=str(tmp_path / "Dockerfile"), path=str(tmp_path)))
+    text = reply["result"]["content"][0]["text"]
+    assert reply["result"]["isError"] is True and "check_lockfile" not in text

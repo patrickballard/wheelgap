@@ -66,9 +66,10 @@ INTERNAL_ERROR = -32603
 INSTRUCTIONS = (
     "wheelgap tells you whether pip or uv can install a package from a prebuilt wheel on a platform, or will have to "
     "build it from source (or can't install it at all). Use check_lockfile on a project's uv.lock, poetry.lock, "
-    "pdm.lock, pylock.toml, Pipfile.lock or requirements.txt before changing the platforms it deploys to, and "
-    "check_package before adding a dependency. Pass the project's Python version: results differ between versions. "
-    "Linux results assume a glibc (manylinux) or musl version: pass the one your image or distro has."
+    "pdm.lock, pylock.toml, Pipfile.lock or requirements.txt before changing the platforms it deploys to, "
+    "check_dockerfile before changing a Dockerfile's FROM line (it reads the image's Python, platform and libc for "
+    "you), and check_package before adding a dependency. Pass the project's Python version: results differ between "
+    "versions. Linux results assume a glibc (manylinux) or musl version: pass the one your image or distro has."
 )
 
 _STATUS_HELP = (
@@ -354,13 +355,19 @@ def _check_dockerfile(args: dict[str, Any]) -> dict[str, Any]:
     path = _existing(raw) if raw else dockerfile.parent
     try:
         image = read_dockerfile(dockerfile)
-    except DockerfileError as e:  # wheelgap's message, which says what to pass instead
-        raise ToolError(f"{e} (here: use check_lockfile with python and targets)") from e
+    except DockerfileError as e:  # wheelgap's message; its CLI advice, where it gives some, translated
+        message = str(e).replace("pass -p/-t instead", "use check_lockfile with python and targets instead")
+        raise ToolError(message) from e
     except OSError as e:  # a Dockerfile that can't be read
         raise ToolError(f"{args['dockerfile']}: {e.strerror or e}") from e
     argv = ["--json", f"--dockerfile={dockerfile}"]
     argv += [f"--target={p}" for p in _platforms(args)]
-    out = _run_cli(argv, path)
+    try:
+        out = _run_cli(argv, path)
+    except ToolError as e:
+        if raw or "no lockfile found" not in str(e):
+            raise
+        raise ToolError(f"{e} (pass 'path': the lockfile or project directory)") from e
     out["image"] = {"python": image.python, "platform": image.platform, "glibc": image.glibc, "musl": image.musl}
     return out
 
