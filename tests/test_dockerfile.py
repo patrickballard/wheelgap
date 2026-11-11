@@ -4,7 +4,15 @@ import pytest
 
 from wheelgap import pypi
 from wheelgap.cli import main
-from wheelgap.dockerfile import DockerfileError, ImageTarget, _heredocs, last_from, parse_from, read_dockerfile
+from wheelgap.dockerfile import (
+    DockerfileError,
+    ImageTarget,
+    _heredocs,
+    _syntax_directive,
+    last_from,
+    parse_from,
+    read_dockerfile,
+)
 
 
 @pytest.mark.parametrize(
@@ -294,16 +302,55 @@ _TWO_STAGES = "FROM python:3.13-alpine AS base\nFROM python:3.12-slim\n"
                 "#syntax = docker/dockerfile:latest",
                 "# check=skip=all\n# syntax=docker/dockerfile:1.28",
                 "// syntax=docker.io/docker/dockerfile:1.29.0-labs",
-                "# hello\n# syntax=docker/dockerfile:1.2",  # not a directive after another comment
+                "# syntax=docker/dockerfile:1.16",
+                "# syntax=docker/dockerfile:1.28.0-rc1",
+                # 1.4 to 1.15 and 1.3-labs read an ordinary heredoc the same way.
+                "# syntax=docker/dockerfile:1.7",
+                "# syntax=docker/dockerfile:1.4.3",
+                "# syntax=docker/dockerfile:1.15-labs",
+                "# syntax=docker/dockerfile:1.3-labs",
+                "# syntax=docker/dockerfile:1.15\n# escape=`",
+                # Not a `# syntax=` directive, so the built-in frontend.
+                "# hello\n# syntax=docker/dockerfile:1.2",  # after another comment
+                " # syntax=docker/dockerfile:1.2",  # not at the start of the line
+                # The frontend is the value up to its first space.
+                "# syntax=docker/dockerfile:1 key=value",
             ]
         ],
-        ("# syntax=docker/dockerfile:1.2\n" + _TWO_STAGES + "RUN echo hi\nFROM base\n", _ALPINE),
+        # No heredoc where an old frontend has none either: nothing to read differently.
+        *[
+            (f"# syntax={image}\n{_TWO_STAGES}{line}\nFROM base\n", _ALPINE)
+            for image in ["docker/dockerfile:1.2", "docker/dockerfile:1.7", "example.com/frontend:1"]
+            for line in ["RUN echo hi", "RUN echo $((1<<2))"]
+        ],
     ],
 )
 def test_heredoc_bodies_are_not_instructions(tmp_path, text, expected):
     path = tmp_path / "Dockerfile"
     path.write_bytes(text.encode())  # keep the \r and \n exactly as written
     assert read_dockerfile(path) == expected
+
+
+@pytest.mark.parametrize(
+    ("lines", "expected"),
+    [
+        (["# syntax=a"], "a"),
+        (["#syntax = a  "], "a"),
+        (["# Syntax=a b"], "a"),  # cut at the first space
+        (["# check=x", "# escape=`", "# syntax=a"], "a"),
+        (["#!/usr/bin/env x", "# syntax=a"], "a"),
+        (["//syntax=a"], "a"),
+        (["// check=x", "// syntax=a"], "a"),
+        ([" # syntax=a"], None),  # a directive starts its line
+        (["# hello", "# syntax=a"], None),
+        (["# check=x", "# check=y", "# syntax=a"], None),  # parsing stops at a repeated directive
+        (["//check=x", "//check=y", "//syntax=a"], None),
+        (["# syntax="], None),
+        (["", "# syntax=a"], None),
+    ],
+)
+def test_syntax_directive_found_as_buildkit_does(lines, expected):
+    assert _syntax_directive(lines) == expected
 
 
 def test_a_line_too_deeply_nested_to_lex_is_an_error_not_a_traceback(tmp_path):
@@ -563,22 +610,34 @@ def test_escape_directive_rules(tmp_path):
         ("FROM python:3.13\nRUN <<A <<B\nA\n", "unterminated heredoc <<B"),
         ("FROM python:3.13\nRUN cat <<EOF \\", "unterminated heredoc <<EOF"),  # ends mid-continuation too
         ("FROM python:3.13\nRUN echo $((1 << BITS))\n", r"unterminated heredoc <<BITS\)\)"),
-        # A `<<` under a `# syntax=` frontend that may read heredocs differently (none before 1.4).
+        # A heredoc under a `# syntax=` frontend that has none (1.3 and older, but 1.3-labs), or that wheelgap
+        # can't place.
         *[
-            (f"{directive}\nFROM python:3.13-alpine AS base\nFROM python:3.12\n{line}\n", "frontend may read `<<`")
+            (f"{directive}\n{_TWO_STAGES}RUN <<EOF\nFROM base\nEOF\n", "may read the heredocs in 'RUN <<EOF'")
             for directive in [
                 "# syntax=docker/dockerfile:1.2",
-                "# syntax=docker/dockerfile:1.3",
-                "# syntax=docker/dockerfile:1.3-labs",
-                "# syntax=docker/dockerfile:1.15.0",
-                "# syntax=docker/dockerfile:1.27.1-labs",
-                "# syntax=docker/dockerfile:1.28.0-rc1",
+                "# syntax=docker/dockerfile:1.2-labs",
+                "# syntax=docker/dockerfile:1.3.1",
+                "# syntax=docker/dockerfile:1.0-experimental",
                 "# syntax=docker/dockerfile:1@sha256:" + "0" * 64,
                 "# syntax=example.com/frontend:1",
                 "#!/usr/bin/env buildctl\n# syntax=docker/dockerfile:1.2",
                 "//syntax=docker/dockerfile:1.2",
             ]
-            for line in ["RUN <<EOF\nFROM base\nEOF", "RUN echo $((1<<2))"]
+        ],
+        # 1.4 to 1.15 (and 1.3-labs) read some heredocs differently: a space after <<, ${...}, the --flags under
+        # `# escape=` before 1.15, `[...] <<EOF` before 1.9.
+        *[
+            (f"# syntax=docker/dockerfile:{tag}\n{_TWO_STAGES}{line}\nFROM base\nEOF\n", "may read the heredocs")
+            for tag, line in [
+                ("1.7", "RUN cat << EOF"),
+                ("1.15.0", "RUN cat <<\tEOF"),
+                ("1.3-labs", "RUN echo $((1 << EOF))"),
+                ("1.15-labs", "RUN cat <<EOF ${x:-y}"),
+                ("1.4", "RUN cat <<EOF${x}"),
+                ("1.14\n# escape=`", "RUN <<EOF"),
+                ("1.8", 'RUN ["a"] <<EOF'),
+            ]
         ],
         # Outside a heredoc, a Python import is a FROM with the wrong arguments.
         ("FROM python:3.13\nfrom app import main\n", "expected 'IMAGE' or 'IMAGE AS NAME'"),
