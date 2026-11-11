@@ -102,12 +102,43 @@ def test_unknown_platform():
         resolve_platform("solaris")
 
 
-@pytest.mark.parametrize("name", ["linux-aarch46", "Linux_AARCH46", "linux/aarch46"])
-def test_unknown_platform_suggests_a_close_name(name):
-    with pytest.raises(TargetError, match=r"; did you mean 'linux-aarch64'\?") as caught:
+@pytest.mark.parametrize(
+    "name,suggestion",
+    [
+        ("linux-aarch46", "linux-aarch64"),
+        ("Linux_AARCH46", "linux-aarch64"),
+        ("window-amd64", "win-amd64"),
+        ("linx-x86_64", "linux-x86_64"),
+        ("musl-aarch46", "musl-aarch64"),
+        ("pyodid", "pyodide"),
+    ],
+)
+def test_unknown_platform_suggests_a_close_name(name, suggestion):
+    with pytest.raises(TargetError) as caught:
         resolve_platform(name)
-    assert str(caught.value).startswith(f"unknown target {name!r}")
-    assert "known:" not in str(caught.value)
+    assert str(caught.value) == f"unknown target {name!r}; did you mean {suggestion!r}?"
+
+
+# A real name for another OS or arch, a bare arch, or a Docker platform (glibc or musl depends on the image):
+# suggesting a near neighbour here would point at the wrong platform.
+@pytest.mark.parametrize(
+    "name",
+    [
+        "macos-amd64",
+        "musl-amd64",
+        "osx-arm64",
+        "darwin-arm64",
+        "linux-riscv32",
+        "linux-armv6",
+        "x86_64",
+        "aarch64",
+        "linux/arm46",
+    ],
+)
+def test_unknown_platform_never_suggests_another_platform(name):
+    with pytest.raises(TargetError, match=r"\(known:") as caught:
+        resolve_platform(name)
+    assert "did you mean" not in str(caught.value)
 
 
 def test_unknown_platform_without_a_close_name():

@@ -203,15 +203,35 @@ def _norm(name: str) -> str:
 
 _LOOKUP = {_norm(k): k for k in PLATFORMS} | {_norm(k): v for k, v in ALIASES.items()}
 
+# Words that already name an OS or arch. A typo of one is worth a suggestion, but one of these in place of another
+# (macos-amd64, osx-arm64, linux-riscv32) is a different platform, and suggesting ours would be a wrong answer.
+_REAL_WORDS = frozenset(word for key in _LOOKUP for word in key.split("-")) | {
+    *("osx", "darwin", "macosx", "x86", "x64", "amd", "arm", "i386", "i686", "386"),
+    *("armv6", "armv6l", "arm32", "ppc64", "riscv32"),
+}
+
+
+def _suggest(name: str) -> str | None:
+    """The platform an unknown name is a typo of, or None when it's unclear or names something else."""
+    if "/" in name:  # a Docker platform: glibc or musl depends on the image, so don't guess
+        return None
+    norm = _norm(name)
+    for key in difflib.get_close_matches(norm, list(_LOOKUP), n=3, cutoff=0.8):
+        words, key_words = norm.split("-"), key.split("-")
+        if len(words) == len(key_words) and all(
+            a == b or (a not in _REAL_WORDS and difflib.SequenceMatcher(None, a, b).ratio() >= 0.7)
+            for a, b in zip(words, key_words, strict=True)
+        ):
+            return _LOOKUP[key]
+    return None
+
 
 def resolve_platform(name: str) -> str:
     try:
         return _LOOKUP[_norm(name)]
     except KeyError:
-        # Match on normalized names, as the lookup does, so -t Linux_AARCH46 gets a suggestion too.
-        matches = difflib.get_close_matches(_norm(name), list(_LOOKUP), n=1)
-        if matches:
-            raise TargetError(f"unknown target {name!r}; did you mean {_LOOKUP[matches[0]]!r}?") from None
+        if suggestion := _suggest(name):
+            raise TargetError(f"unknown target {name!r}; did you mean {suggestion!r}?") from None
         known = ", ".join(PLATFORMS)
         raise TargetError(f"unknown target {name!r} (known: {known})") from None
 
