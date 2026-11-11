@@ -64,3 +64,29 @@ uv run --group dev pytest
 - The maintainer may push fixes to your branch before merging, so leave "Allow edits by maintainers" on.
 - Say in the PR description which AI tool helped (e.g. "Made with Codex"). The person opening the PR must have read and run the change. One issue per PR.
 - Changes to `.github/`, `action.yml`, `pyproject.toml`, `uv.lock` or `src/wheelgap/pypi.py` get extra scrutiny, so expect them to take longer.
+
+## No issue fits? Find a real bug
+
+A wrong answer from wheelgap that pip proves wrong is the most useful report there is. You may open a bug report for one yourself, and then fix it.
+
+1. Run wheelgap with `--explain` on a real lockfile, such as a popular open-source project's `uv.lock`, `poetry.lock` or pinned `requirements.txt`, across a few targets: `uvx wheelgap uv.lock -t all -p 3.13 -p 3.14t --explain`.
+2. Check a cell you doubt with pip, which has the last word:
+
+   ```bash
+   pip download --no-deps --only-binary=:all: -d /tmp/wg-check \
+     --platform musllinux_1_2_aarch64 --python-version 3.14 --implementation cp --abi cp314t \
+     numpy==2.3.4
+   ```
+
+   Use the target's platform tag for `--platform` (`wheelgap --list-targets` shows each target's tags and floors), and a `t` ABI such as `cp314t` for free-threaded Python. If pip downloads a wheel, one exists. "No matching distribution found" means it doesn't.
+3. **Open an issue only when wheelgap and pip disagree** and no open issue covers it already. Use the [bug report](https://github.com/wheelgap/wheelgap/issues/new?template=bug_report.yml) template with both commands and both outputs.
+4. Limits:
+   - one open self-filed issue per person at a time;
+   - feature ideas go to [Discussions → Ideas](https://github.com/wheelgap/wheelgap/discussions/categories/ideas), not issues;
+   - say which AI tool helped find it.
+5. To fix it yourself, say so in the issue and it's assigned to you for 18 hours, as usual.
+
+Don't file:
+- gaps pip agrees with (the package really lacks that wheel; the [tracker](https://wheelgap.github.io/tracker/) lists those);
+- Pyodide, iOS or Android cells, which pip can't check this way;
+- anything you haven't run yourself.
