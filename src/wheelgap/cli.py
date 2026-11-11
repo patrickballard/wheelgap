@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.metadata
 import json
 import os
 import platform
@@ -13,6 +12,7 @@ import sysconfig
 import tomllib
 from pathlib import Path
 
+import packaging
 from packaging.markers import InvalidMarker, Marker
 from packaging.utils import canonicalize_name
 
@@ -91,7 +91,7 @@ def version_string() -> str:
     gil_disabled = sysconfig.get_config_var("Py_GIL_DISABLED")
     suffix = "t" if gil_disabled else ""
     return (
-        f"wheelgap {__version__} (packaging {importlib.metadata.version('packaging')}, "
+        f"wheelgap {__version__} (packaging {packaging.__version__}, "
         f"{platform.python_implementation()} {platform.python_version()}{suffix})"
     )
 
