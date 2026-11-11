@@ -120,6 +120,8 @@ Each cell in the table is one of:
 
 Packages that are fine everywhere are hidden; `--all` shows them.
 
+With several targets, the summary also counts the gaps on each target that has any (`musl-aarch64  1 from source, 1 missing`). `--markdown` lists the same counts. `--json` has them for every target, with zeros where there are no gaps and also when only one target is checked, as `summary.per_target`, keyed by target label: `{"linux-aarch64": {"source": 0, "missing": 0, "unknown": 0}, "musl-aarch64": {"source": 1, "missing": 1, "unknown": 0}}`.
+
 `--explain` lists, for each gap, the wheels that were rejected and why, closest misses first:
 
 ```
@@ -145,7 +147,7 @@ uvloop 0.21.0 on win-arm64: ● source
 
 If you think wheelgap got a package wrong, that output (or `--json --explain`) is all a bug report needs, with no need to share your lockfile.
 
-**Exit codes:** `0` no gaps, `1` gaps found, `2` bad input. `--exit-zero` always exits `0`. `--fail-on missing` (or `fail-on = "missing"` in `[tool.wheelgap]`) accepts source builds and only exits `1` when a package can't be installed at all.
+**Exit codes:** `0` no gaps, `1` gaps found, `2` bad input. `--exit-zero` exits `0` even when gaps are found; bad input still exits `2`. `--fail-on missing` (or `fail-on = "missing"` in `[tool.wheelgap]`) accepts source builds and only exits `1` when a package can't be installed at all.
 
 If an input can't be read (a missing lockfile, an unknown target, a bad `[tool.wheelgap]` value), `--json` prints `{"error": {"message": "...", "type": "TargetError"}}` on stdout instead of results, next to the usual `wheelgap: error:` line on stderr and exit code 2. Command-line usage errors from argparse are still plain text on stderr.
 
@@ -334,6 +336,7 @@ Contributing to wheelgap with an agent? See [AGENTS.md](https://github.com/wheel
 - **Environment markers are respected.** A `pywin32 ; sys_platform == 'win32'` dependency won't show up as a Linux gap. For `uv.lock` the dependency graph is walked per target, so transitive platform-specific packages are handled too.
 - `--online` re-checks lockfile packages against PyPI. Packages the lock says came from another index keep their locked files, so their names are never sent to PyPI. Use it when a project has uploaded new wheels for an existing version since you locked, or if your `uv.lock` was generated with `environments` restrictions. A `uv.lock` or `pylock.toml` whose `requires-python` leaves out a target's Python (say `==3.13.*`, checked with `-p 3.14t`) may be missing wheels for it, because uv only keeps the wheels that can serve `requires-python`. Without `--online`, wheelgap then also looks up its PyPI packages on the index, keeps the lock's own files if a lookup fails, and prints a note (with `-q`, only when some packages couldn't be re-checked).
 - `--offline` never contacts an index, for CI and coding agents without network. Inputs that need a lookup (requirements files, `Pipfile.lock`, package names, lockfile entries with no file list) make it exit 2 with an error naming the packages, so use a lockfile instead. A `--pyodide-lock` URL is refused too: pass a downloaded copy. The `requires-python` re-check above is skipped, with a note that those Pythons may show false gaps. It can't be combined with `--online`. Set `offline = true` in `[tool.wheelgap]` to make it the project default; `--online` on the command line overrides it for one run.
+- **Cache:** lookups of a pinned version (`name==1.2.3`) are saved for 24 hours, so a repeat run needn't ask PyPI again. They're kept in `wheelgap/pinned-v1` inside `~/.cache` on Linux (or `$XDG_CACHE_HOME`), `~/Library/Caches` on macOS and `%LOCALAPPDATA%` on Windows. Each entry holds only the release's file names and yanked flags, named by a hash of the index URL (without any credentials in it), the package and the version; on Linux and macOS, wheelgap creates the folder and its entries readable by you only. `--online` always asks the index again and saves the fresh answer, so later runs use it; `--no-cache` neither reads nor saves the cache for one run. Unpinned names, version ranges and `--index-url` lookups aren't cached, and neither are lookups from the Python API.
 - **Private indexes:** `--index-url URL` (or `index-url` in `[tool.wheelgap]`) sends the PyPI lookups described above to a simple index that serves the JSON form (PEP 691) instead. The URL must be https (plain http only for localhost). Credentials can go in the URL passed to `--index-url` (`https://user:token@host/simple`) and never appear in output; in CI, `--index-url "$PRIVATE_INDEX"` keeps them out of your repo. They're refused in `[tool.wheelgap]`, since `pyproject.toml` is committed. An index that only serves HTML (PEP 503) gets a clear error.
 
 ## Why this exists
