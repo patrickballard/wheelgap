@@ -611,7 +611,7 @@ def select_pyproject_extras(source: Source, extras: Iterable[str], all_extras: b
     available = source.pyproject_extras
     if available is None:
         return
-    wanted = list(available) if all_extras else [canonicalize_name(e) for e in extras]
+    wanted: list[str] = list(available) if all_extras else [canonicalize_name(e) for e in extras]
     if source.pyproject_dynamic_extras and (all_extras or wanted):
         raise SourceError(
             f"{source.label}: [project] optional-dependencies is dynamic (set by the build backend), "
@@ -629,7 +629,7 @@ def _self_reference_extras(source: Source, line: str, req: Requirement) -> list[
             f"{source.label}: {line!r} refers to the project itself with a marker, URL or version, "
             "which isn't supported"
         )
-    wanted = [canonicalize_name(e) for e in req.extras]
+    wanted: list[str] = [canonicalize_name(e) for e in req.extras]
     if wanted and source.pyproject_dynamic_extras:
         raise SourceError(
             f"{source.label}: {line!r} names extras, but [project] optional-dependencies is dynamic "
