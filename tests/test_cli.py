@@ -784,6 +784,21 @@ def test_json_summary_per_target(capsys, fixtures):
     assert summary["with_gaps"] == 2 and summary["per_target"] == {}
 
 
+def test_summary_per_target_counts_unknown(capsys, fake_pypi):
+    # notonindex isn't on the fake index, so it's unknown on both targets; nowheels builds from source on both.
+    args = ("notonindex==1.0", "nowheels==0.9", "-p", "3.13", "-t", "linux-x86_64,win-amd64")
+    code, out, _ = run(capsys, *args, "--json")
+    assert code == 1
+    assert json.loads(out)["summary"]["per_target"] == {
+        "linux-x86_64": {"source": 1, "missing": 0, "unknown": 1},
+        "win-amd64": {"source": 1, "missing": 0, "unknown": 1},
+    }
+    code, out, _ = run(capsys, *args, "--color", "never")
+    assert "linux-x86_64  1 from source, 1 unknown" in out.splitlines()
+    code, out, _ = run(capsys, *args, "--markdown")
+    assert "- win-amd64: 1 from source, 1 unknown" in out.splitlines()
+
+
 def test_markdown_summary_per_target(capsys, fixtures):
     code, out, _ = run(capsys, str(fixtures / "armgap"), *ARMGAP_THREE_TARGETS, "--markdown")
     assert code == 1
@@ -1655,6 +1670,8 @@ def test_output_schema_rejects_other_shapes():
         "summary": {"packages": 1, "with_gaps": 0, "per_target": {}},
     }
     _check_schema(good, schema, schema)
+    # Released versions (0.8.0 and older) have no per_target, and the schema on main must still accept their output.
+    _check_schema(good | {"summary": {"packages": 1, "with_gaps": 0}}, schema, schema)
     _check_schema(
         good | {"summary": good["summary"] | {"per_target": {"win-arm64": {"source": 1, "missing": 0, "unknown": 0}}}},
         schema,
@@ -1666,7 +1683,6 @@ def test_output_schema_rejects_other_shapes():
         good | {"packages": [package | {"results": {"linux-x86_64": "maybe"}}]},  # not a Status
         good | {"packages": [package | {"bundled": {}}]},  # the bundled version is a string
         good | {"summary": {"packages": True, "with_gaps": 0, "per_target": {}}},  # not an integer
-        good | {"summary": {"packages": 1, "with_gaps": 0}},  # per_target is required
         good | {"summary": good["summary"] | {"per_target": {"win-arm64": {"source": 1}}}},  # every count is there
     ):
         with pytest.raises(AssertionError):

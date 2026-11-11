@@ -59,7 +59,7 @@
         "summary": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["packages", "with_gaps", "per_target"],
+            "required": ["packages", "with_gaps"],
             "properties": {
                 "packages": {"type": "integer", "minimum": 0, "description": "Number of entries in packages."},
                 "with_gaps": {
@@ -69,7 +69,7 @@
                 },
                 "per_target": {
                     "type": "object",
-                    "description": "Gap counts for each target with at least one gap, keyed by target label. Targets without gaps are left out, and it's empty when only one target is checked.",
+                    "description": "Gap counts for each target with at least one gap, keyed by target label. Targets without gaps are left out, and it's empty when only one target is checked. Present from the release after 0.8.0 on; older versions leave it out.",
                     "additionalProperties": {
                         "type": "object",
                         "additionalProperties": false,
