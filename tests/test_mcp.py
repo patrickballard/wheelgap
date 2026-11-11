@@ -301,6 +301,60 @@ def test_check_lockfile_errors(fake_pypi, tmp_path, monkeypatch, arguments, mess
         assert message in reply["result"]["content"][0]["text"]
 
 
+def test_check_package_pyodide_lock_marks_bundled(fake_pypi, fixtures):
+    lock = str(fixtures / "pyodide-lock.json")  # Pyodide 0.29.0, Python 3.13: ships fastlib 2.0.0
+    (_, without, with_lock) = run(
+        init(),
+        call("check_package", name="fastlib", python="3.13", targets=["pyodide"]),
+        call("check_package", 2, name="fastlib", python="3.13", targets=["pyodide"], pyodide_lock=lock),
+    )
+    assert without["result"]["structuredContent"]["results"] == {"3.13 pyodide": "missing"}
+    data = with_lock["result"]["structuredContent"]
+    assert with_lock["result"]["isError"] is False
+    assert data["results"] == {"3.13 pyodide": "bundled"}
+    assert data["ok"] is True
+    assert data["gaps"] == []
+    assert data["bundled"] == "2.0.0"
+
+
+def test_check_lockfile_pyodide_lock_marks_bundled(fake_pypi, fixtures, tmp_path):
+    (tmp_path / "requirements.txt").write_text("fastlib==2.0.0\nnowheels==0.9\n", encoding="utf-8")
+    (_, reply) = run(
+        init(),
+        call(
+            "check_lockfile",
+            path=str(tmp_path / "requirements.txt"),
+            python="3.13",
+            targets=["pyodide"],
+            pyodide_lock=str(fixtures / "pyodide-lock.json"),
+        ),
+    )
+    data = reply["result"]["structuredContent"]
+    assert reply["result"]["isError"] is False
+    assert {g["name"]: g["results"] for g in data["gaps"]} == {"nowheels": {"3.13 pyodide": "missing"}}
+
+
+@pytest.mark.parametrize("tool", ["check_package", "check_lockfile"])
+@pytest.mark.parametrize(
+    ("lock", "message"),
+    [
+        ("pyodide-lock.json", "is for Python 3.13"),  # the fixture's Python, but the targets use 3.12
+        ("no-such-lock.json", "no-such-lock.json"),
+        ("http://example.com/pyodide-lock.json", "plain http:// URLs are not allowed"),
+    ],
+)
+def test_pyodide_lock_problems_are_tool_errors(fake_pypi, fixtures, tmp_path, tool, lock, message):
+    (tmp_path / "requirements.txt").write_text("fastlib==2.0.0\n", encoding="utf-8")
+    spec = lock if "://" in lock else str(fixtures / lock)
+    where = {"name": "fastlib"} if tool == "check_package" else {"path": str(tmp_path / "requirements.txt")}
+    (_, reply) = run(init(), call(tool, **where, python="3.12", targets=["pyodide"], pyodide_lock=spec))
+    assert reply["result"]["isError"] is True
+    text = reply["result"]["content"][0]["text"]
+    assert message in text
+    assert "internal error" not in text
+    assert not fake_pypi
+
+
 def test_list_targets():
     (_, reply) = run(init(), call("list_targets"))
     data = reply["result"]["structuredContent"]

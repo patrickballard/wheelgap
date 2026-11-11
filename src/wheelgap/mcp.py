@@ -27,6 +27,7 @@ from packaging.version import InvalidVersion, Version
 from . import __version__
 from .api import Result, check_package, make_targets, running_python
 from .check import Status
+from .pyodide import PyodideLockError, load_pyodide_lock
 from .sources import SourceError
 from .targets import (
     ALIASES,
@@ -64,8 +65,8 @@ _STATUS_HELP = (
     "Statuses: 'wheel' (a compatible wheel exists), 'source' (no wheel, so installers build the sdist and need a "
     "compiler and headers), 'missing' (nothing installable: no wheel and no sdist, or, on pyodide, iOS and Android, "
     "which can't build sdists, no wheel), 'unknown' (the lookup failed: not a pass), 'n/a' (environment markers say "
-    "it isn't installed there), 'bundled' (Pyodide ships its own build). On pyodide, check_package doesn't know "
-    "which packages Pyodide ships itself (numpy and many others), so those show 'source' or 'missing'."
+    "it isn't installed there), 'bundled' (Pyodide ships its own build). On pyodide, packages Pyodide ships itself "
+    "(numpy and many others) show 'source' or 'missing' unless you pass pyodide_lock."
 )
 
 _PYTHON_PROP = {
@@ -88,6 +89,13 @@ _VERSION_PROPS = {
     },
     "musl": {"type": "string", "description": f"musl version for musl-* (Alpine) targets. Default: {DEFAULT_MUSL}."},
     "macos": {"type": "string", "description": f"Oldest macOS version to support. Default: {DEFAULT_MACOS}."},
+}
+_PYODIDE_LOCK_PROP = {
+    "type": "string",
+    "description": (
+        "Absolute path or https URL of a Pyodide release's pyodide-lock.json, so packages that release ships itself "
+        "count as 'bundled' on pyodide targets for its Python. Its Python must be one a pyodide target uses."
+    ),
 }
 _READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}
 
@@ -112,6 +120,7 @@ TOOLS: list[dict[str, Any]] = [
                 "python": _PYTHON_PROP | {"description": _PYTHON_PROP["description"] + " Default: the server's."},
                 "targets": _TARGETS_PROP,
                 **_VERSION_PROPS,
+                "pyodide_lock": _PYODIDE_LOCK_PROP,
             },
             "required": ["name"],
             "additionalProperties": False,
@@ -147,6 +156,8 @@ TOOLS: list[dict[str, Any]] = [
                 },
                 "targets": _TARGETS_PROP,
                 **_VERSION_PROPS,
+                "pyodide_lock": _PYODIDE_LOCK_PROP
+                | {"description": _PYODIDE_LOCK_PROP["description"] + " Default: [tool.wheelgap] pyodide-lock."},
                 "offline": {
                     "type": "boolean",
                     "description": "Use only the files recorded in the lockfile; never contact the index.",
@@ -236,7 +247,14 @@ def _check_package(args: dict[str, Any]) -> dict[str, Any]:
         targets = make_targets(_pythons(args) or None, _platforms(args) or None, **versions)
     except TargetError as e:
         raise ToolError(str(e)) from e
-    result: Result = check_package(name, version, targets)
+    lock_spec = (_string(args, "pyodide_lock") or "").strip()
+    try:
+        locks = [load_pyodide_lock(lock_spec)] if lock_spec else []
+        result: Result = check_package(name, version, targets, pyodide_locks=locks)
+    except PyodideLockError as e:
+        raise ToolError(str(e)) from e
+    except OSError as e:  # a lock path that can't be read
+        raise ToolError(f"{lock_spec}: {e.strerror or e}") from e
     out: dict[str, Any] = result.to_dict()
     out["ok"] = result.ok
     out["gaps"] = [t.label(True) for t in result.gaps]
@@ -266,6 +284,8 @@ def _check_lockfile(args: dict[str, Any]) -> dict[str, Any]:
     argv += [f"--python={p}" for p in _pythons(args)]
     argv += [f"--target={p}" for p in _platforms(args)]
     argv += [f"--{key}={value}" for key, value in _versions(args).items()]
+    if lock_spec := (_string(args, "pyodide_lock") or "").strip():
+        argv.append(f"--pyodide-lock={lock_spec}")
     if offline:
         argv.append("--offline")
     argv += ["--", str(path)]
