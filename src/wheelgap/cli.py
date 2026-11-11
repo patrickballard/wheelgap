@@ -599,21 +599,25 @@ def gap_summary(gaps: list[Row], total: int, style: Style) -> str:
 
 
 def target_counts(gaps: list[Row], targets: list[Target]) -> dict[str, dict[str, int]]:
-    """Gap counts for each target that has gaps, keyed by target label; empty for a single target.
+    """Gap counts for every target (zeros included), keyed by target label. This is --json's summary.per_target.
 
-    Text, --json and --markdown all use this, so they can't disagree.
+    Text and --markdown show a subset of it (shown_target_counts), so the three formats can't disagree.
     """
-    if len(targets) < 2:
-        return {}
-
     multi_py = len({target.python for target in targets}) > 1
     out = {}
     for target in targets:
         statuses = [row.results[target] for row in gaps]
-        counts = {s.value: statuses.count(s) for s in (Status.SOURCE, Status.MISSING, Status.UNKNOWN)}
-        if any(counts.values()):
-            out[target.label(multi_py)] = counts
+        out[target.label(multi_py)] = {
+            s.value: statuses.count(s) for s in (Status.SOURCE, Status.MISSING, Status.UNKNOWN)
+        }
     return out
+
+
+def shown_target_counts(gaps: list[Row], targets: list[Target]) -> dict[str, dict[str, int]]:
+    """The targets the text and Markdown summaries list: those with gaps, and none for a single target."""
+    if len(targets) < 2:
+        return {}
+    return {label: counts for label, counts in target_counts(gaps, targets).items() if any(counts.values())}
 
 
 def target_counts_text(counts: dict[str, int], style: Style) -> str:
@@ -628,7 +632,7 @@ def target_counts_text(counts: dict[str, int], style: Style) -> str:
 
 
 def target_lines(gaps: list[Row], targets: list[Target], style: Style) -> list[str]:
-    per_target = target_counts(gaps, targets)
+    per_target = shown_target_counts(gaps, targets)
     width = max(map(len, per_target), default=0)
     return [f"{label:<{width}}  {target_counts_text(counts, style)}" for label, counts in per_target.items()]
 
@@ -692,7 +696,7 @@ def render_markdown(
             out += [f"{hidden} {noun} with wheels for every target hidden (`--all` to show).", ""]
 
     if gaps:
-        per_target = target_counts(gaps, targets)
+        per_target = shown_target_counts(gaps, targets)
         if per_target:
             out += [f"- {_md(label)}: {target_counts_text(counts, plain)}" for label, counts in per_target.items()]
             out.append("")

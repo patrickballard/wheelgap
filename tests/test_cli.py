@@ -775,13 +775,15 @@ def test_json_summary_per_target(capsys, fixtures):
     code, out, _ = run(capsys, str(fixtures / "armgap"), *ARMGAP_THREE_TARGETS, "--json")
     assert code == 1
     assert json.loads(out)["summary"]["per_target"] == {
+        "linux-aarch64": {"source": 0, "missing": 0, "unknown": 0},
         "musl-aarch64": {"source": 1, "missing": 1, "unknown": 0},
         "win-arm64": {"source": 1, "missing": 1, "unknown": 0},
     }
     code, out, _ = run(capsys, str(fixtures / "armgap"), "-p", "3.13", "-t", "musl-aarch64", "--json")
     assert code == 1
     summary = json.loads(out)["summary"]
-    assert summary["with_gaps"] == 2 and summary["per_target"] == {}
+    assert summary["with_gaps"] == 2
+    assert summary["per_target"] == {"musl-aarch64": {"source": 1, "missing": 1, "unknown": 0}}
 
 
 def test_summary_per_target_counts_unknown(capsys, fake_pypi):
@@ -796,6 +798,7 @@ def test_summary_per_target_counts_unknown(capsys, fake_pypi):
     code, out, _ = run(capsys, *args, "--color", "never")
     assert "linux-x86_64  1 from source, 1 unknown" in out.splitlines()
     code, out, _ = run(capsys, *args, "--markdown")
+    assert "- linux-x86\\_64: 1 from source, 1 unknown" in out.splitlines()  # labels are escaped like the table's
     assert "- win-amd64: 1 from source, 1 unknown" in out.splitlines()
 
 
@@ -1133,7 +1136,11 @@ def test_ignore_known_gap_json(capsys, fixtures):
     data = json.loads(out)
     assert code == 0 and not err
     assert data["ignored"] == ["newglibc"]
-    assert data["summary"] == {"packages": 1, "with_gaps": 0, "per_target": {}}
+    assert data["summary"] == {
+        "packages": 1,
+        "with_gaps": 0,
+        "per_target": {"linux-aarch64": {"source": 0, "missing": 0, "unknown": 0}},
+    }
     assert [p["name"] for p in data["packages"]] == ["armlib"]
 
 
@@ -1178,7 +1185,11 @@ def test_ignore_repeated_comma_separated_and_duplicate_names(capsys, fixtures):
     assert "wheelgap: note: --ignore matches no package: not-installed" in err
     assert data["ignored"] == ["armlib", "newglibc"]
     assert data["packages"] == []
-    assert data["summary"] == {"packages": 0, "with_gaps": 0, "per_target": {}}
+    assert data["summary"] == {
+        "packages": 0,
+        "with_gaps": 0,
+        "per_target": {"musl-aarch64": {"source": 0, "missing": 0, "unknown": 0}},
+    }
 
 
 def test_ignore_canonicalizes_punctuation(capsys, fixtures, tmp_path):
@@ -1216,7 +1227,11 @@ def test_ignore_does_not_hide_other_gaps(capsys, fixtures):
     data = json.loads(out)
     assert code == 1 and not err
     assert data["ignored"] == ["newglibc"]
-    assert data["summary"] == {"packages": 1, "with_gaps": 1, "per_target": {}}
+    assert data["summary"] == {
+        "packages": 1,
+        "with_gaps": 1,
+        "per_target": {"musl-aarch64": {"source": 1, "missing": 0, "unknown": 0}},
+    }
     assert data["packages"][0]["results"] == {"musl-aarch64": "source"}
 
 
@@ -1241,7 +1256,11 @@ def test_no_ignore_keeps_gaps(capsys, fixtures, output):
     if output == "--json":
         data = json.loads(out)
         assert data["ignored"] == []
-        assert data["summary"] == {"packages": 2, "with_gaps": 1, "per_target": {}}
+        assert data["summary"] == {
+            "packages": 2,
+            "with_gaps": 1,
+            "per_target": {"linux-aarch64": {"source": 0, "missing": 1, "unknown": 0}},
+        }
         assert [p["name"] for p in data["packages"]] == ["armlib", "newglibc"]
     else:
         assert "1 of 2 packages has gaps" in out
@@ -1270,7 +1289,11 @@ def test_ignore_config_accepts_list_or_string(capsys, fixtures, tmp_path, value)
     data = json.loads(out)
     assert data["ignored"] == ["armlib", "newglibc"]
     assert data["packages"] == []
-    assert data["summary"] == {"packages": 0, "with_gaps": 0, "per_target": {}}
+    assert data["summary"] == {
+        "packages": 0,
+        "with_gaps": 0,
+        "per_target": {"musl-aarch64": {"source": 0, "missing": 0, "unknown": 0}},
+    }
 
 
 @pytest.mark.parametrize("override, ignored, total", [("ArmLib", ["armlib"], 1), ("", [], 2)])
@@ -1281,7 +1304,11 @@ def test_ignore_cli_replaces_config(capsys, fixtures, tmp_path, override, ignore
     assert code == 1 and not err  # the configured newglibc ignore was replaced, not extended
     data = json.loads(out)
     assert data["ignored"] == ignored
-    assert data["summary"] == {"packages": total, "with_gaps": 1, "per_target": {}}
+    assert data["summary"] == {
+        "packages": total,
+        "with_gaps": 1,
+        "per_target": {"linux-aarch64": {"source": 0, "missing": 1, "unknown": 0}},
+    }
     assert "newglibc" in [p["name"] for p in data["packages"]]
 
 
@@ -1613,16 +1640,13 @@ def _assert_matches_output_schema(data):
         1 for pkg in data["packages"] if any(s in {"source", "missing", "unknown"} for s in pkg["results"].values())
     )
     assert summary["with_gaps"] == expected
-    # per_target counts each target's gap cells, leaving out targets without any (and everything for one target)
-    per_target = {}
-    if len(labels) > 1:
-        for label in labels:
-            counts = {
-                s: sum(pkg["results"][label] == s for pkg in data["packages"]) for s in ("source", "missing", "unknown")
-            }
-            if any(counts.values()):
-                per_target[label] = counts
-    assert summary["per_target"] == per_target
+    # per_target counts each target's gap cells, for every target (zeros included)
+    assert summary["per_target"] == {
+        label: {
+            s: sum(pkg["results"][label] == s for pkg in data["packages"]) for s in ("source", "missing", "unknown")
+        }
+        for label in labels
+    }
 
 
 def test_json_output_matches_schema(capsys, fixtures):
