@@ -525,11 +525,13 @@ def three_pins(tmp_path):
 
 
 @pytest.mark.parametrize(("version", "token"), [("2025-06-18", "tok"), ("2024-11-05", 7)])
-def test_check_lockfile_sends_progress_with_a_token(fake_pypi, three_pins, version, token):
+def test_check_lockfile_sends_progress_with_a_token(fake_pypi, three_pins, tmp_path, version, token):
+    other = tmp_path / "other.txt"  # not yet cached, so the call without a token really looks it up
+    other.write_text("fastlib==2.0.0\n", encoding="utf-8")
     replies = run(
         init(version),
         with_token(call("check_lockfile", path=three_pins, python="3.13"), token),
-        call("check_lockfile", 2, path=three_pins, python="3.13", offline=True),  # no token, no progress
+        call("check_lockfile", 2, path=str(other), python="3.13"),  # no token, no progress
     )
     progress = [r["params"] for r in replies if is_progress(r)]
     assert [(p["progressToken"], p["progress"], p["total"]) for p in progress] == [(token, n, 3) for n in range(4)]
@@ -624,3 +626,21 @@ def test_batch_with_a_call_still_gets_one_list(fake_pypi):
     (reply,) = run([call("list_targets", 1), ping(2), {"jsonrpc": "2.0", "method": "notifications/initialized"}])
     assert [r["id"] for r in reply] == [1, 2]
     assert reply[0]["result"]["isError"] is False
+
+
+def test_a_result_that_isnt_json_is_still_answered(monkeypatch):
+    monkeypatch.setitem(mcp._HANDLERS, "list_targets", lambda args: {"x": {1}})
+    (_, reply) = run(init(), call("list_targets"))
+    assert reply["id"] == 1
+    assert reply["result"]["isError"] is True
+    assert "TypeError" in reply["result"]["content"][0]["text"]
+
+
+def test_a_crash_on_the_worker_is_still_answered(monkeypatch):
+    def broken(self, name, arguments):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(mcp.Server, "_call", broken)
+    (_, reply) = run(init(), call("list_targets"))
+    assert reply["id"] == 1
+    assert reply["error"]["code"] == mcp.INTERNAL_ERROR

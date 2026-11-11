@@ -407,6 +407,11 @@ class Server:
 
     def close(self, wait: bool = True) -> None:
         """Wait for queued and running calls to send their results (or, with wait=False, drop the queued ones)."""
+        if not wait:  # Ctrl-C: the running call may still finish its lookups, but nothing more is written
+            with self._lock:
+                for call in self._calls.values():
+                    call.cancelled = True
+                self._send = None
         if self._worker is not None:
             self._worker.shutdown(wait=wait, cancel_futures=not wait)
 
@@ -429,9 +434,13 @@ class Server:
         return replies or None
 
     def _batch_on_worker(self, message: list[object]) -> None:
-        reply = self._batch(message)
-        if reply is not None and self._send is not None:
-            self._send(reply)
+        try:
+            reply: object = self._batch(message)
+        except Exception as e:  # a bug: the client still gets an answer rather than waiting forever
+            reply = _error(None, INTERNAL_ERROR, f"internal error: {type(e).__name__}: {e}")
+        with self._lock:
+            if reply is not None and self._send is not None:
+                self._send(reply)
 
     def _one(self, message: object, inline: bool = False) -> dict[str, Any] | None:
         if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
@@ -497,9 +506,13 @@ class Server:
             else:
                 with pypi.reporting_progress(lambda done, total: self._progress(call, done, total)):
                     result = self._call(name, arguments)
+            reply = _reply(msg_id, result)
+        except Exception as e:  # a bug: the client still gets an answer rather than waiting forever
+            reply = _error(msg_id, INTERNAL_ERROR, f"internal error: {type(e).__name__}: {e}")
+        try:
             with self._lock:  # the lock, so a cancel handled before this point always drops the result
                 if not call.cancelled and self._send is not None:
-                    self._send(_reply(msg_id, result))
+                    self._send(reply)
         finally:
             with self._lock:
                 if self._calls.get(msg_id) is call:
@@ -515,7 +528,7 @@ class Server:
             return
         params: dict[str, Any] = {"progressToken": call.token, "progress": progress, "total": overall}
         if self.protocol_version >= _PROGRESS_MESSAGE_FROM:
-            params["message"] = f"looked up {progress} of {overall} packages"
+            params["message"] = f"{progress} of {overall} index lookups done"
         with self._lock:
             if call.cancelled or self._send is None:
                 return
@@ -537,11 +550,12 @@ class Server:
             # wheelgap's own messages go to stderr already; this keeps any stray print off the protocol stream.
             with contextlib.redirect_stdout(sys.stderr):
                 data = _HANDLERS[name](arguments)
+            text = json.dumps(data, indent=1)
         except (ToolError, TargetError, SourceError) as e:
             return {"content": [{"type": "text", "text": str(e)}], "isError": True}
         except Exception as e:  # a bug: report it to the model rather than end the connection
             return {"content": [{"type": "text", "text": f"internal error: {type(e).__name__}: {e}"}], "isError": True}
-        result: dict[str, Any] = {"content": [{"type": "text", "text": json.dumps(data, indent=1)}], "isError": False}
+        result: dict[str, Any] = {"content": [{"type": "text", "text": text}], "isError": False}
         if self.protocol_version >= _STRUCTURED_FROM:
             result["structuredContent"] = data
         return result
