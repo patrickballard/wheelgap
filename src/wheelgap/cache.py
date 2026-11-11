@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 MAX_AGE = 24 * 60 * 60  # seconds: new wheels for an existing release show up within a day
 
@@ -35,7 +36,10 @@ def cache_dir() -> Path:
 
 
 def _path(index: str, name: str, version: str) -> Path:
-    # Hashed: the index URL may carry credentials (WHEELGAP_INDEX_URL), and none of it is written in clear text.
+    # Credentials in the index URL (WHEELGAP_INDEX_URL=https://user:token@host/pypi) are left out of the key,
+    # and what's left is hashed, so no URL is written in clear text.
+    parts = urlsplit(index)
+    index = urlunsplit(parts._replace(netloc=parts.netloc.rpartition("@")[2]))
     digest = hashlib.sha256(f"{index}\n{name}\n{version}".encode()).hexdigest()
     return cache_dir() / f"{digest}.json"
 
@@ -60,7 +64,8 @@ def save_files(index: str, name: str, version: str, files: list[dict]) -> None:
     try:
         kept = [{k: f[k] for k in ("filename", "yanked") if k in f} for f in files]
         path = _path(index, name, version)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.parent.mkdir(mode=0o700, parents=True, exist_ok=True)  # private to the user (not on Windows)
+        path.parent.mkdir(mode=0o700, exist_ok=True)
         # Written next to the target, then renamed over it, so a reader never sees half a file.
         fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-", suffix=".json")
         try:

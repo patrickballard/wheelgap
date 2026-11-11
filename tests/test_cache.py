@@ -1,7 +1,11 @@
 import json
+import os
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
+from conftest import FAKE_INDEX
 
 from wheelgap import cache, check_packages, pypi
 from wheelgap.cache import cache_dir as real_cache_dir
@@ -26,7 +30,7 @@ def pinned(tmp_path):
 
 
 def lookup(name, version):
-    return pypi.fill(Package(name, version), use_cache=True)
+    return pypi.fill(Package(name, version), read_cache=True, write_cache=True)
 
 
 def test_repeat_run_reads_pinned_lookups_from_the_cache(capsys, fake_pypi, pinned, lookup_cache):
@@ -43,6 +47,20 @@ def test_online_and_no_cache_look_up_again(capsys, fake_pypi, pinned, lookup_cac
     run(capsys, pinned, "-p", "3.13", "-t", "linux-x86_64")
     code, _, _ = run(capsys, pinned, "-p", "3.13", "-t", "linux-x86_64", flag)
     assert code == 0
+    assert fake_pypi == [FASTLIB, FASTLIB]
+
+
+def test_online_saves_its_fresh_answer_for_later_runs(capsys, fake_pypi, pinned, monkeypatch):
+    def statuses(*flags):
+        code, out, _ = run(capsys, pinned, "-p", "3.13", "-t", "linux-x86_64", "--json", *flags)
+        return json.loads(out)["packages"][0]["results"]["linux-x86_64"]
+
+    monkeypatch.setitem(FAKE_INDEX["fastlib"], "2.0.0", ["fastlib-2.0.0.tar.gz"])
+    assert statuses() == "source"  # cached
+    monkeypatch.setitem(FAKE_INDEX["fastlib"], "2.0.0", ["fastlib-2.0.0-cp313-cp313-manylinux_2_17_x86_64.whl"])
+    assert statuses() == "source"  # still the cached answer
+    assert statuses("--online") == "wheel"  # asked again...
+    assert statuses() == "wheel"  # ...and saved, so a plain run doesn't go back to the older answer
     assert fake_pypi == [FASTLIB, FASTLIB]
 
 
@@ -146,7 +164,9 @@ def test_yanked_files_stay_marked_when_cached(fake_pypi):
 
 def test_unpinned_and_range_lookups_are_not_cached(fake_pypi, lookup_cache):
     for _ in range(2):
-        pypi.fill_all([Package("unpinned", None), Package("ranged", None, spec=">=1,<2")], use_cache=True)
+        pypi.fill_all(
+            [Package("unpinned", None), Package("ranged", None, spec=">=1,<2")], read_cache=True, write_cache=True
+        )
     assert len(fake_pypi) == 4
     assert not list(lookup_cache.iterdir())
 
@@ -154,7 +174,7 @@ def test_unpinned_and_range_lookups_are_not_cached(fake_pypi, lookup_cache):
 def test_simple_index_lookups_are_not_cached(fake_simple, lookup_cache):
     for _ in range(2):
         pkg = Package("fastlib", "2.0.0")
-        pypi.fill_all([pkg], simple_index="https://user:secret@index.example/simple", use_cache=True)
+        pypi.fill_all([pkg], simple_index="https://user:secret@index.example/simple", read_cache=True, write_cache=True)
         assert pkg.error is None and pkg.files
     assert len(fake_simple.calls) == 2
     assert not list(lookup_cache.iterdir())
@@ -187,11 +207,65 @@ def test_cache_entries_hold_no_urls_or_credentials(monkeypatch, lookup_cache):
     assert json.loads(text)["files"] == [{"filename": "fastlib-2.0.0.tar.gz"}]
 
 
+def test_credentials_are_not_part_of_the_key(monkeypatch, lookup_cache):
+    calls = []
+
+    def fetch_json(url, timeout=20.0):
+        calls.append(url)
+        return {"urls": [{"filename": "fastlib-2.0.0.tar.gz"}]}
+
+    monkeypatch.setattr(pypi, "fetch_json", fetch_json)
+    for base in ("https://alice:one@mirror.example/pypi", "https://bob:two@mirror.example/pypi"):
+        monkeypatch.setenv("WHEELGAP_INDEX_URL", base)
+        assert lookup("fastlib", "2.0.0").files == ["fastlib-2.0.0.tar.gz"]
+    assert calls == ["https://alice:one@mirror.example/pypi/fastlib/2.0.0/json"]  # the second came from the cache
+    (entry,) = lookup_cache.iterdir()
+    assert entry == cache._path("https://mirror.example/pypi", "fastlib", "2.0.0")
+
+
+def test_name_and_version_are_part_of_the_key(fake_pypi):
+    pins = [("fastlib", "2.0.0"), ("purewheel", "3.1"), ("ranged", "1.5"), ("ranged", "2.0")]
+    for _ in range(2):
+        files = {pin: lookup(*pin).files for pin in pins}
+        assert files == {pin: FAKE_INDEX[pin[0]][pin[1]] for pin in pins}  # each its own answer
+    assert fake_pypi == [f"https://pypi.org/pypi/{name}/{version}/json" for name, version in pins]
+
+
 def test_the_index_is_part_of_the_key(fake_pypi, monkeypatch):
     lookup("fastlib", "2.0.0")
     monkeypatch.setattr(pypi, "index_url", lambda: "https://mirror.example/pypi")
     lookup("fastlib", "2.0.0")  # not on the fake mirror, but asked: another index's answer isn't reused
     assert fake_pypi[:2] == [FASTLIB, "https://mirror.example/pypi/fastlib/2.0.0/json"]
+
+
+def test_entries_are_written_atomically_in_the_cache_folder(fake_pypi, monkeypatch, lookup_cache):
+    made, replaced = [], []
+    mkstemp, replace = tempfile.mkstemp, os.replace
+
+    def spy_mkstemp(*args, **kwargs):
+        made.append(kwargs["dir"])
+        return mkstemp(*args, **kwargs)
+
+    def spy_replace(src, dst):
+        replaced.append((Path(src), Path(dst)))
+        return replace(src, dst)
+
+    monkeypatch.setattr(cache.tempfile, "mkstemp", spy_mkstemp)
+    monkeypatch.setattr(cache.os, "replace", spy_replace)
+    lookup("fastlib", "2.0.0")
+    ((src, dst),) = replaced
+    assert made == [lookup_cache] and src.parent == dst.parent == lookup_cache  # same folder: an atomic rename
+    assert list(lookup_cache.iterdir()) == [dst]  # the temp file is gone
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no POSIX permission bits")
+def test_the_cache_folder_is_private(fake_pypi, monkeypatch, tmp_path):
+    folder = tmp_path / "home" / "wheelgap" / "pinned-v1"
+    monkeypatch.setattr(cache, "cache_dir", lambda: folder)
+    lookup("fastlib", "2.0.0")
+    assert folder.stat().st_mode & 0o777 == folder.parent.stat().st_mode & 0o777 == 0o700
+    (entry,) = folder.iterdir()
+    assert entry.stat().st_mode & 0o777 == 0o600
 
 
 @pytest.mark.parametrize(
