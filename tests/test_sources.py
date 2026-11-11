@@ -7,12 +7,14 @@ from wheelgap.check import Status, check
 from wheelgap.sources import (
     Source,
     SourceError,
+    UvSelection,
     find_lockfile,
     load_inputs,
     parse_poetry_lock,
     parse_requirements,
     pythons_outside_lock,
     select_pyproject_extras,
+    select_uv_dependencies,
 )
 from wheelgap.targets import build_targets
 
@@ -860,3 +862,15 @@ def test_no_lockfile_without_project_table_has_no_pyproject_hint(tmp_path):
     with pytest.raises(SourceError, match="no lockfile found") as e:
         find_lockfile(tmp_path)
     assert "pyproject.toml`" not in str(e.value)
+
+
+def test_poetry_group_selection_keeps_markers_per_group(tmp_path):
+    (tmp_path / "poetry.lock").write_text(
+        '[[package]]\nname = "colorama"\nversion = "0.4.6"\ngroups = ["main", "dev"]\n'
+        'markers = { main = "sys_platform == \\"win32\\"" }\nfiles = []\n\n[metadata]\nlock-version = "2.1"\n',
+        encoding="utf-8",
+    )
+    sources = load_inputs([str(tmp_path)])
+    select_uv_dependencies(sources, UvSelection(no_dev=True))
+    # Without dev, only main's marker applies.
+    assert sources[0].packages[0].markers == ['sys_platform == "win32"']
