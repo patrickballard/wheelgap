@@ -352,20 +352,22 @@ def is_pypi(registry: str | None) -> bool:
     return (registry or PYPI_SIMPLE).rstrip("/") == PYPI_SIMPLE
 
 
-def _index(url: str, suffixes: tuple[str, ...]) -> tuple[str, str, int | None, str] | None:
-    """(scheme, hostname, port, repository path) of an index URL ending in one of `suffixes`, the default port
-    filled in. One host can serve many repositories (Artifactory, Nexus, devpi), so the path counts. Never the
-    user or password. None for anything that isn't plainly such a URL: it matches nothing."""
+def _index(url: str, suffix: str) -> tuple[str, str, int | None, str] | None:
+    """(scheme, hostname, port, repository path) of an index URL ending in `suffix`, the default port filled in.
+    One host can serve many repositories (Artifactory, Nexus), so the path counts. Never the user or password.
+    None for anything that isn't plainly such a URL, so it matches nothing: that includes a backslash, whitespace or
+    a control character, which other URL parsers (pip's, a browser's) may read as a different host."""
+    if "\\" in url or any(c.isspace() or not c.isprintable() for c in url):
+        return None
     try:
         parts = urlsplit(url)
-        port = parts.port or {"https": 443, "http": 80}.get(parts.scheme)
+        port = parts.port
     except ValueError:  # a malformed host or port
         return None
     path = parts.path.rstrip("/")
-    suffix = next((s for s in suffixes if path.endswith(s)), None)
-    if not parts.hostname or suffix is None or parts.query or parts.fragment:
+    if not parts.hostname or port == 0 or not path.endswith(suffix) or parts.query or parts.fragment:
         return None
-    return parts.scheme, parts.hostname, port, path.removesuffix(suffix).rstrip("/")
+    return parts.scheme, parts.hostname, port or {"https": 443, "http": 80}.get(parts.scheme), path[: -len(suffix)]
 
 
 def may_look_up(registry: str | None, simple_index: str | None = None) -> bool:
@@ -378,8 +380,8 @@ def may_look_up(registry: str | None, simple_index: str | None = None) -> bool:
     base = index_url()
     if registry is None or simple_index is not None or base == DEFAULT_INDEX:
         return False
-    index = _index(registry, ("/simple", "/+simple"))  # devpi serves /<user>/<index>/+simple
-    return index is not None and index == _index(base, ("/pypi",))
+    index = _index(registry, "/simple")
+    return index is not None and index == _index(base, "/pypi")
 
 
 def keeps_locked_files(p: Package) -> bool:
