@@ -31,8 +31,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from packaging.utils import canonicalize_name
 
@@ -224,6 +228,48 @@ def summary(n_worse: int, n_new: int) -> str:
     return ", ".join(parts) + "."
 
 
+class GitInputError(Exception):
+    """A REF:PATH input git can't read, or no git to read it with."""
+
+
+# A Windows drive path (C:\\x, C:/x) has a colon but isn't a ref.
+_DRIVE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def git_ref_input(arg: str) -> tuple[str, str] | None:
+    """(REF, PATH) when `arg` isn't an existing path and looks like REF:PATH (origin/main:uv.lock), else None."""
+    if os.path.exists(arg) or _DRIVE.match(arg):
+        return None
+    ref, sep, path = arg.partition(":")
+    if not sep or not ref or not path or path.endswith(("/", "\\")):
+        return None
+    return ref, path
+
+
+def read_git_ref(ref: str, path: str, into: Path) -> str:
+    """Write `git show REF:PATH` to a file named like PATH in `into` (so its format is detected) and return it.
+
+    git runs with an argument list, never a shell, and `--end-of-options` keeps a ref that starts with `-` from
+    being read as an option.
+    """
+    try:
+        done = subprocess.run(
+            ["git", "show", "--end-of-options", f"{ref}:{path}"],
+            capture_output=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        raise GitInputError(f"{ref}:{path} looks like a git ref, but git isn't on PATH") from None
+    if done.returncode != 0:
+        message = done.stderr.decode(errors="replace").strip() or f"git show exited {done.returncode}"
+        raise GitInputError(f"can't read {ref}:{path} from git: {message}")
+    side = into / str(len(list(into.iterdir())))
+    side.mkdir()
+    out = side / Path(path.replace("\\", "/")).name
+    out.write_bytes(done.stdout)
+    return str(out)
+
+
 def main(argv: list[str] | None = None, prog: str = "python -m wheelgap.diff") -> int:
     for stream in (sys.stdout, sys.stderr):
         # As in cli.main: write UTF-8 to a non-UTF-8 pipe (Windows cp1252) instead of crashing on ✓ and →.
@@ -235,8 +281,12 @@ def main(argv: list[str] | None = None, prog: str = "python -m wheelgap.diff") -
             else:
                 reconfigure(errors="replace")
     p = argparse.ArgumentParser(prog=prog, description=__doc__.splitlines()[0])
-    p.add_argument("old", metavar="OLD", help="the lockfile before the change (or a directory)")
-    p.add_argument("new", metavar="NEW", help="the lockfile after the change (or a directory)")
+    p.add_argument(
+        "old",
+        metavar="OLD",
+        help="the lockfile before the change (or a directory, or git's REF:PATH, e.g. origin/main:uv.lock)",
+    )
+    p.add_argument("new", metavar="NEW", help="the lockfile after the change (or a directory, or REF:PATH)")
     p.add_argument(
         "-p",
         "--python",
@@ -253,12 +303,16 @@ def main(argv: list[str] | None = None, prog: str = "python -m wheelgap.diff") -
     try:
         targets = make_targets(args.python or None, args.target or None)
         sides = []
-        for path in (args.old, args.new):
-            results, source = _check_lockfile(path, targets, online=False, offline=False)
-            packages = merge(results, targets)
-            add_skipped(packages, source, targets)
-            sides.append(packages)
-    except Exception as e:  # unknown targets, unreadable or malformed lockfiles
+        with tempfile.TemporaryDirectory(prefix="wheelgap-diff-") as tmp:
+            for path in (args.old, args.new):
+                ref = git_ref_input(path)
+                if ref is not None:
+                    path = read_git_ref(*ref, Path(tmp))
+                results, source = _check_lockfile(path, targets, online=False, offline=False)
+                packages = merge(results, targets)
+                add_skipped(packages, source, targets)
+                sides.append(packages)
+    except Exception as e:  # unknown targets, unreadable or malformed lockfiles, a REF:PATH git can't read
         print(f"wheelgap: error: {type(e).__name__}: {e}", file=sys.stderr)
         if args.json:  # as the main command does, so scripts needn't parse stderr
             print(json.dumps({"error": {"message": str(e), "type": type(e).__name__}}))
