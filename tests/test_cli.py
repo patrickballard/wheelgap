@@ -1606,3 +1606,13 @@ def test_output_schema_rejects_other_shapes():
     ):
         with pytest.raises(AssertionError):
             _check_schema(bad, schema, schema)
+
+
+def test_version_includes_packaging(capsys):
+    with pytest.raises(SystemExit) as caught:
+        main(["--version"])
+    assert caught.value.code == 0
+    out, err = capsys.readouterr()
+    assert out.startswith("wheelgap ")
+    assert "packaging " in out
+    assert not err
