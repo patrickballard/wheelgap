@@ -120,6 +120,8 @@ Each cell in the table is one of:
 
 Packages that are fine everywhere are hidden; `--all` shows them.
 
+With several targets, the summary also counts the gaps on each target that has any (`musl-aarch64  1 from source, 1 missing`). `--markdown` lists the same counts. `--json` has them for every target, with zeros where there are no gaps and also when only one target is checked, as `summary.per_target`, keyed by target label: `{"linux-aarch64": {"source": 0, "missing": 0, "unknown": 0}, "musl-aarch64": {"source": 1, "missing": 1, "unknown": 0}}`.
+
 `--explain` lists, for each gap, the wheels that were rejected and why, closest misses first:
 
 ```
@@ -145,7 +147,7 @@ uvloop 0.21.0 on win-arm64: ● source
 
 If you think wheelgap got a package wrong, that output (or `--json --explain`) is all a bug report needs, with no need to share your lockfile.
 
-**Exit codes:** `0` no gaps, `1` gaps found, `2` bad input. `--exit-zero` always exits `0`. `--fail-on missing` (or `fail-on = "missing"` in `[tool.wheelgap]`) accepts source builds and only exits `1` when a package can't be installed at all.
+**Exit codes:** `0` no gaps, `1` gaps found, `2` bad input. `--exit-zero` exits `0` even when gaps are found; bad input still exits `2`. `--fail-on missing` (or `fail-on = "missing"` in `[tool.wheelgap]`) accepts source builds and only exits `1` when a package can't be installed at all.
 
 If an input can't be read (a missing lockfile, an unknown target, a bad `[tool.wheelgap]` value), `--json` prints `{"error": {"message": "...", "type": "TargetError"}}` on stdout instead of results, next to the usual `wheelgap: error:` line on stderr and exit code 2. Command-line usage errors from argparse are still plain text on stderr.
 
