@@ -19,7 +19,7 @@ from packaging.utils import canonicalize_name
 
 from . import __version__
 from .api import running_python
-from .check import Row, Status, check, explain, has_sdist, marker_holds, reachable
+from .check import CELL, Row, Status, check, explain, has_sdist, marker_holds, reachable
 from .dockerfile import DockerfileError, read_dockerfile
 from .junit import write_junit
 from .offline import require_offline, undo_offline
@@ -370,16 +370,6 @@ def use_color(mode: str) -> bool:
     if os.environ.get("FORCE_COLOR"):
         return True
     return sys.stdout.isatty()
-
-
-CELL = {
-    Status.WHEEL: ("✓", "green"),
-    Status.SOURCE: ("● source", "yellow"),
-    Status.MISSING: ("✗ missing", "red"),
-    Status.UNKNOWN: ("? unknown", "dim"),
-    Status.NOT_NEEDED: ("–", "dim"),
-    Status.BUNDLED: ("✓ bundled", "green"),
-}
 
 
 def ignored_gaps(row: Row) -> list[Target]:
@@ -956,7 +946,7 @@ def main(argv: list[str] | None = None) -> int:
                 strict=bool(from_cli or args.only_group),
             )
         if offline:
-            require_offline(sources, offline_how)
+            require_offline(sources, offline_how, simple_index=index_url)
         fail_on = args.fail_on or config.get("fail-on", "source")
         pyodide_lock = None
         if args.pyodide_lock:
