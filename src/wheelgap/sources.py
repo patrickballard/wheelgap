@@ -98,6 +98,13 @@ class Source:
     uv_selection: UvSelection | None = None
     # A requirements file (requirements.txt, .in, requirements.lock): unpinned lines get the newest release.
     requirements: bool = False
+    # pyproject.toml only: [project] optional-dependencies by canonical extra name, applied with --extra.
+    # None when the input isn't a pyproject.toml.
+    pyproject_extras: dict[str, list[str]] | None = None
+    # pyproject.toml only: optional-dependencies is listed in [project] dynamic, so the extras can't be read.
+    pyproject_dynamic_extras: bool = False
+    # pyproject.toml only: the canonical [project] name, to spot `myproject[extra]` self-references.
+    pyproject_name: str | None = None
 
 
 def pythons_outside_lock(source: Source, targets: Iterable[Target]) -> list[str]:
@@ -538,6 +545,84 @@ def _pinned_version(req: Requirement) -> str | None:
     return None
 
 
+def parse_pyproject(path: Path) -> Source:
+    """A library's direct dependencies: [project] dependencies, read as requirement lines. Their own
+    dependencies aren't known without a lockfile, so they aren't checked."""
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as e:
+        raise SourceError(f"{path}: invalid TOML: {e}") from None
+    project = data.get("project")
+    if not isinstance(project, dict):
+        raise SourceError(f"{path}: no [project] table, so there are no dependencies to read")
+    dynamic = project.get("dynamic", [])
+    if not isinstance(dynamic, list):
+        raise SourceError(f"{path}: [project] dynamic must be a list of strings")
+    if "dependencies" in dynamic:
+        raise SourceError(
+            f"{path}: [project] dependencies is dynamic (set by the build backend), so wheelgap can't read it; "
+            "check a lockfile instead"
+        )
+    dependencies = project.get("dependencies", [])
+    if not isinstance(dependencies, list) or not all(isinstance(d, str) for d in dependencies):
+        raise SourceError(f"{path}: [project] dependencies must be a list of strings")
+    optional = project.get("optional-dependencies", {})
+    if not isinstance(optional, dict) or not all(
+        isinstance(v, list) and all(isinstance(d, str) for d in v) for v in optional.values()
+    ):
+        raise SourceError(f"{path}: [project] optional-dependencies must be a table of lists of strings")
+    pkgs = [requirement_to_package(d, path.name) for d in dependencies]
+    extras: dict[str, list[str]] = {canonicalize_name(name): list(lines) for name, lines in optional.items()}
+    source = Source(
+        path.name, pkgs, pyproject_extras=extras, pyproject_dynamic_extras="optional-dependencies" in dynamic
+    )
+    if isinstance(name := project.get("name"), str):
+        source.pyproject_name = canonicalize_name(name)
+    return source
+
+
+def select_pyproject_extras(source: Source, extras: Iterable[str], all_extras: bool) -> None:
+    """Add the requirements of the chosen [project] optional-dependencies groups to a pyproject.toml source.
+    A self-reference such as `myproject[test]` inside an extra pulls in that extra, as pip does."""
+    available = source.pyproject_extras
+    if available is None:
+        return
+    wanted = list(available) if all_extras else [canonicalize_name(e) for e in extras]
+    if not wanted:
+        return
+    if source.pyproject_dynamic_extras:
+        raise SourceError(
+            f"{source.label}: [project] optional-dependencies is dynamic (set by the build backend), "
+            "so its extras can't be read"
+        )
+    if unknown := sorted(set(wanted) - set(available)):
+        raise SourceError(f"{source.label}: unknown extras: {', '.join(unknown)}")
+    own_name = source.pyproject_name
+    seen: set[str] = set()
+    while wanted:
+        extra = wanted.pop(0)
+        if extra in seen:
+            continue
+        seen.add(extra)
+        for line in available.get(extra, []):
+            try:
+                req = Requirement(line)
+            except InvalidRequirement as e:
+                raise SourceError(f"{source.label}: can't parse requirement {line!r}: {e}") from None
+            if own_name is not None and canonicalize_name(req.name) == own_name:
+                if req.marker or req.url or req.specifier:
+                    raise SourceError(
+                        f"{source.label}: {line!r} refers to the project itself with a marker, URL or version, "
+                        "which isn't supported"
+                    )
+                missing = sorted({canonicalize_name(e) for e in req.extras} - set(available))
+                if missing:
+                    raise SourceError(f"{source.label}: {line!r} names unknown extras: {', '.join(missing)}")
+                wanted.extend(canonicalize_name(e) for e in req.extras)
+                continue
+            source.packages.append(requirement_to_package(line, source.label))
+
+
 def requirement_to_package(text: str, origin: str) -> Package:
     try:
         req = Requirement(text)
@@ -646,6 +731,8 @@ PARSERS = {
 
 def load_file(path: Path) -> Source:
     name = path.name
+    if name == "pyproject.toml":
+        return parse_pyproject(path)
     if name in PARSERS:
         return PARSERS[name](path)
     if name.startswith("pylock.") and name.endswith(".toml"):
@@ -658,7 +745,8 @@ def load_file(path: Path) -> Source:
         return parse_requirements(path)
     raise SourceError(
         f"don't know how to read {path} "
-        "(expected uv.lock, pylock.toml, poetry.lock, pdm.lock, Pipfile.lock, requirements.lock or requirements.txt)"
+        "(expected uv.lock, pylock.toml, poetry.lock, pdm.lock, Pipfile.lock, requirements.lock, requirements.txt "
+        "or pyproject.toml)"
     )
 
 
@@ -667,10 +755,19 @@ def find_lockfile(directory: Path) -> Path:
         candidate = directory / name
         if candidate.is_file():
             return candidate
-    raise SourceError(
-        f"no lockfile found in {directory} (looked for {', '.join(LOCKFILES)}). "
-        "Pass a file, or package names like `wheelgap numpy psycopg2`."
-    )
+    hint = "Pass a file, or package names like `wheelgap numpy psycopg2`."
+    if _has_project_table(directory / "pyproject.toml"):
+        pyproject = directory / "pyproject.toml"
+        hint = f"To check the direct dependencies in its pyproject.toml, run `wheelgap {pyproject}`. " + hint
+    raise SourceError(f"no lockfile found in {directory} (looked for {', '.join(LOCKFILES)}). {hint}")
+
+
+def _has_project_table(pyproject: Path) -> bool:
+    """For the "no lockfile" hint only: a missing or unreadable file just means no hint."""
+    try:
+        return isinstance(tomllib.loads(pyproject.read_text(encoding="utf-8")).get("project"), dict)
+    except (OSError, ValueError):
+        return False
 
 
 def load_inputs(inputs: list[str]) -> list[Source]:

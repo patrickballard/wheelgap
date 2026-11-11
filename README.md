@@ -178,8 +178,28 @@ unless `--only-group` is given;
 project extras are included only when requested. `--no-dev` removes `dev`, while `--only-group`
 excludes project dependencies and default groups. Combine `--only-group` with `--group` to add more
 groups, but not with `--extra`/`--all-extras`. An explicit `dev` group conflicts with `--no-dev`.
-Unknown extra/group names are errors. Command-line selectors need a `uv.lock` input; configured
-`extras`/`groups` apply only to `uv.lock` inputs.
+Unknown extra/group names are errors. Command-line selectors need a `uv.lock` input (or, for
+`--extra`/`--all-extras`, a `pyproject.toml`; see below); configured `extras`/`groups` apply only to
+`uv.lock` inputs.
+
+### Check a library's direct dependencies
+
+Libraries usually don't commit a lockfile. Pass the library's `pyproject.toml` to check the
+dependencies it declares in `[project] dependencies`:
+
+```bash
+wheelgap pyproject.toml -t win-arm64 -t pyodide
+# Add [project.optional-dependencies] groups
+wheelgap pyproject.toml --extra test
+wheelgap pyproject.toml --all-extras
+```
+
+Each requirement is read like a line of a requirements file, so ranges use the newest matching
+release and markers are respected. Only direct dependencies are checked: their own dependencies
+aren't, and wheelgap always prints a note saying so. Use a lockfile for the full picture.
+`[dependency-groups]` isn't read yet, so `--group`, `--only-group` and `--no-dev` are errors here, and a
+`dependencies` listed in `[project] dynamic` is an input error (exit 2). `wheelgap .` in a directory
+with no lockfile doesn't switch to `pyproject.toml` on its own; the error suggests it.
 
 Default selections can also be configured:
 
