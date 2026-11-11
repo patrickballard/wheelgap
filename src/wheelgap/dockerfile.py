@@ -70,9 +70,6 @@ class ImageTarget:
 _DIRECTIVE_RE = re.compile(r"^#\s*([A-Za-z]+)\s*=\s*(.+?)\s*$")
 _DIRECTIVES = {"syntax", "escape", "check"}  # the parser directives BuildKit knows
 
-# A Python import, e.g. inside a `RUN <<EOF` heredoc: never a valid FROM instruction.
-_PY_IMPORT_RE = re.compile(r"^from\s+\S+\s+import\s")
-
 # Heredocs, as BuildKit reads them: see _heredocs.
 # Go's unicode.IsSpace. Unlike str.isspace, it doesn't count \x1c-\x1f.
 _GO_SPACES = (
@@ -96,7 +93,9 @@ class _ShellLexer:
         self.pos = 0
         self.raw_quotes = raw_quotes
         self.raw_escapes = raw_escapes
-        self.buf = ""  # the word being built: like Go's wordsBuffer, one buffer shared by nested _stop_on calls
+        # The word being built, as a list of non-empty strings so building it stays linear: like Go's wordsBuffer,
+        # one buffer shared by nested _stop_on calls.
+        self.buf: list[str] = []
 
     def words(self) -> list[str]:
         """ProcessWords, raising _LexError where it returns an error."""
@@ -115,17 +114,18 @@ class _ShellLexer:
         result = ""
         words: list[str] = []
         in_word = False
-        self.buf = ""  # this also empties the word of any _stop_on this one is nested in, as in Go
+        self.buf = []  # this also empties the word of any _stop_on this one is nested in, as in Go
 
         def add(text: str, raw: bool) -> None:  # wordsStruct's addRawString (raw) and addString
             nonlocal in_word
             for ch in [text] if raw else text:
                 if raw or ch not in _GO_SPACES:
-                    self.buf += ch
+                    if ch:
+                        self.buf.append(ch)
                     in_word = True
                 elif in_word and self.buf:
-                    words.append(self.buf)
-                    self.buf = ""
+                    words.append("".join(self.buf))
+                    self.buf = []
                     in_word = False
 
         saved, self.raw_escapes = self.raw_escapes, raw_escapes
@@ -162,8 +162,8 @@ class _ShellLexer:
         finally:
             self.raw_escapes = saved
         if self.buf:
-            words.append(self.buf)
-            self.buf = ""
+            words.append("".join(self.buf))
+            self.buf = []
         return result, words
 
     def _quoted(self, quote: str, pattern: bool) -> str:
@@ -358,14 +358,20 @@ def _heredocs(instruction: str, escape: str = "\\") -> list[tuple[str, bool]]:
         keyword, args = _split_command(args, escape)
     if keyword not in ("run", "copy", "add") or _is_exec_form(instruction, args) or "<<" not in instruction:
         return []
-    try:
-        words = _ShellLexer(instruction, raw_quotes=True, raw_escapes=True).words()
-    except _LexError:
-        return []  # heredocsFromLine ignores the error, and has no words
     docs = []
-    for word in words:
-        if (m := _HEREDOC_RE.fullmatch(word)) and (name := _heredoc_name(instruction, m.group(3))) is not None:
-            docs.append((name, m.group(2) == "-"))
+    try:
+        try:
+            words = _ShellLexer(instruction, raw_quotes=True, raw_escapes=True).words()
+        except _LexError:
+            return []  # heredocsFromLine ignores the error, and has no words
+        for word in words:
+            if (m := _HEREDOC_RE.fullmatch(word)) and (name := _heredoc_name(instruction, m.group(3))) is not None:
+                docs.append((name, m.group(2) == "-"))
+    except RecursionError:
+        # Go has no such limit (around 400 nested ${a:-...} here), so BuildKit reads the line: we can't say how.
+        raise DockerfileError(
+            f"{instruction[:80]}...: nested too deeply for wheelgap to find its heredocs, pass -p/-t instead"
+        ) from None
     return docs
 
 
@@ -391,20 +397,25 @@ def _escape_char(lines: list[str]) -> str:
 def _from_lines(text: str) -> list[str]:
     """The arguments of every FROM instruction in order, with line continuations joined as Docker joins them.
 
-    Python `from x import y` lines (from a heredoc) are skipped. Other heredoc contents aren't parsed,
-    so a line in one that looks exactly like a FROM instruction (say, SQL's `FROM base` naming a
-    stage) is still read as one: a known limit, pass -p/-t for such Dockerfiles.
+    Heredoc bodies (`RUN <<EOF` ... `EOF`) are skipped, so a line in one is never read as an instruction.
+    Follows Parse in BuildKit's parser.go at commit cedaeca8850a2bb536bbd1db72419f3cf491bdb5: each body starts
+    after the whole instruction (continuations joined), one heredoc after another, and is read line by line as
+    written, with no continuations or comments. A line ends a body when, with every trailing \r trimmed (and, for
+    `<<-`, its leading tabs), it's exactly the delimiter. A body the file ends in is an error.
+    https://github.com/moby/buildkit/blob/cedaeca8850a2bb536bbd1db72419f3cf491bdb5/frontend/dockerfile/parser/parser.go
     """
     lines = [raw.rstrip("\r") for raw in text.split("\n")]  # Docker's trimNewline drops every trailing \r
-    esc = re.escape(_escape_char(lines))
+    escape = _escape_char(lines)
+    esc = re.escape(escape)
     continued = re.compile(rf"(?<!{esc}){esc}[ \t]*$")  # one escape char at the end, not two
     found = []
     parts: list[str] = []  # an instruction continued onto the next line
+    heredocs: list[tuple[str, bool]] = []  # (delimiter, strip_tabs) of the bodies still to skip, in order
 
     def finish(instruction: str, joined: bool) -> None:
         # Docker splits the keyword off on ASCII whitespace only, so `FROM<U+00A0>python` isn't a FROM to it.
         words = re.split(r"[ \t\v\f\r]+", instruction, maxsplit=1)
-        if words[0].upper() != "FROM" and re.match(r"(?i)FROM\s", words[0]) and not _PY_IMPORT_RE.match(instruction):
+        if words[0].upper() != "FROM" and re.match(r"(?i)FROM\s", words[0]):
             raise DockerfileError(
                 f"unknown instruction {words[0]!r} (Docker splits instructions on ASCII whitespace only)"
             )
@@ -413,10 +424,14 @@ def _from_lines(text: str) -> list[str]:
         if words and words[0].upper() == "FROM":
             if len(words) == 1:
                 raise DockerfileError("FROM with no image")
-            if not _PY_IMPORT_RE.match(instruction):
-                found.append(words[1])
+            found.append(words[1])
 
     for line in lines:
+        if heredocs:  # a body line: never an instruction, a comment or a continuation
+            name, strip_tabs = heredocs[0]
+            if (line.lstrip("\t") if strip_tabs else line) == name:
+                heredocs.pop(0)
+            continue
         stripped = line.strip()
         if parts and (not stripped or stripped.startswith("#")):
             continue  # Docker skips blank and comment lines inside a continued instruction
@@ -425,12 +440,15 @@ def _from_lines(text: str) -> list[str]:
         if m := continued.search(line):
             parts.append(line[: m.start()])
             continue
-        finish(
-            "".join([*parts, line]).strip(), joined=bool(parts)
-        )  # Docker joins continued lines with nothing in between
+        instruction = "".join([*parts, line])  # Docker joins continued lines with nothing in between
+        finish(instruction.strip(), joined=bool(parts))
+        heredocs = _heredocs(instruction, escape)
         parts = []
     if parts:  # the file ended mid-continuation: Docker still reads what's there
         finish("".join(parts).strip(), joined=len(parts) > 1)
+        heredocs = _heredocs("".join(parts), escape)
+    if heredocs:
+        raise DockerfileError(f"unterminated heredoc <<{heredocs[0][0]} (Docker rejects it)")
     return found
 
 
@@ -492,13 +510,9 @@ def _split_from(args: str) -> tuple[str, str | None, str | None]:
     if len(words) == 3 and words[1].upper() == "AS":
         stage = words[2].lower()
         if not re.fullmatch(r"[a-z][a-z0-9-_.]*", stage):  # BuildKit's parseBuildStageName
-            raise DockerfileError(
-                f"FROM {args}: invalid stage name {words[2]!r} (if this line is inside a heredoc, pass -p/-t instead)"
-            )
+            raise DockerfileError(f"FROM {args}: invalid stage name {words[2]!r}")
         return words[0], platform, stage
-    raise DockerfileError(
-        f"FROM {args}: expected 'IMAGE' or 'IMAGE AS NAME' (if this line is inside a heredoc, pass -p/-t instead)"
-    )
+    raise DockerfileError(f"FROM {args}: expected 'IMAGE' or 'IMAGE AS NAME'")
 
 
 def parse_from(args: str) -> ImageTarget:

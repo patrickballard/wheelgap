@@ -238,15 +238,65 @@ _HEREDOC_LIKE_LINES = [
     "ENV X=<<EOF",
     'LABEL note="a<<b"',
     'RUN ["sh", "-c", "cat <<EOF"]',
+    'RUN --mount=type=cache,target=/x ["cat", "<<EOF"]',
+    "RUN echo '<<EOF'",
     "RUN cat <<<word",
 ]
 
 
 @pytest.mark.parametrize("line", _HEREDOC_LIKE_LINES)
 def test_lines_with_heredoc_like_text_never_hide_the_final_from(tmp_path, line):
-    # wheelgap doesn't parse heredocs, so whatever these mean to Docker, the final FROM is still found.
+    # None of these is a heredoc to Docker (exec form, the wrong instruction, quoted, <<<), so no body is skipped.
     text = f"FROM python:3.13-alpine AS base\n{line}\nFROM python:3.12-slim\n"
     assert read_dockerfile(_dockerfile(tmp_path, text)) == ImageTarget("3.12", "linux-x86_64", glibc="2.41")
+
+
+_SLIM = ImageTarget("3.12", "linux-x86_64", glibc="2.41")
+_ALPINE = ImageTarget("3.13", "musl-x86_64", musl="1.2")
+_TWO_STAGES = "FROM python:3.13-alpine AS base\nFROM python:3.12-slim\n"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # The issue's example: SQL's `FROM base` in a heredoc body isn't a FROM instruction.
+        (_TWO_STAGES + "RUN <<EOF psql\nSELECT *\nFROM base\nEOF\n", _SLIM),
+        (_TWO_STAGES + "RUN <<'EOF'\nFROM base\nEOF\n", _SLIM),
+        (_TWO_STAGES + "ONBUILD RUN <<EOF\nFROM base\nEOF\n", _SLIM),
+        (_TWO_STAGES + "RUN python - <<EOF\nfrom app import main\nEOF\n", _SLIM),
+        # <<- strips leading tabs (only tabs) before comparing; << doesn't.
+        (_TWO_STAGES + "RUN <<-EOF\n\tFROM base\n\t\tEOF\n", _SLIM),
+        (_TWO_STAGES + "RUN <<-EOF\nFROM base\n  EOF\nEOF\n", _SLIM),
+        (_TWO_STAGES + "RUN <<EOF\n\tEOF\nFROM base\nEOF\n", _SLIM),
+        # Every trailing \r is trimmed before comparing (then, for <<-, the leading tabs).
+        (_TWO_STAGES.replace("\n", "\r\n") + "RUN <<EOF\r\nFROM base\r\nEOF\r\r\n", _SLIM),
+        (_TWO_STAGES + "RUN <<-EOF\r\n\tFROM base\r\n\tEOF\r\n", _SLIM),
+        # Several heredocs on one line: each body follows the last, in order.
+        (_TWO_STAGES + "COPY <<A <<B /x\nB\nFROM base\nA\nFROM base\nB\n", _SLIM),
+        # The body starts after the whole instruction, and is read as written: no continuations, no comments.
+        (_TWO_STAGES + "RUN <<EOF \\\n    cat\nFROM base\nEOF\n", _SLIM),
+        (_TWO_STAGES + "RUN <<EOF\necho \\\nEOF\nRUN echo \\\nFROM base\n", _SLIM),
+        (_TWO_STAGES + "RUN <<EOF\n# a comment\nFROM base\nEOF\n", _SLIM),
+        # `<< BITS))` in shell arithmetic is a heredoc to BuildKit, so the next `BITS))` line ends it.
+        (_TWO_STAGES + "RUN echo $((1 << BITS))\nFROM base\nBITS))\n", _SLIM),
+        # A heredoc in an earlier stage: its body can't redefine the stage.
+        ("FROM python:3.13-alpine AS build\nRUN <<EOF\nFROM python:3.11 AS build\nEOF\nFROM build\n", _ALPINE),
+        # Exec form and other instructions have no heredocs, so the next line is an instruction.
+        (_TWO_STAGES + 'RUN ["sh", "-c", "cat <<EOF"]\nFROM base\n', _ALPINE),
+        (_TWO_STAGES + "CMD cat <<EOF\nFROM base\n", _ALPINE),
+    ],
+)
+def test_heredoc_bodies_are_not_instructions(tmp_path, text, expected):
+    path = tmp_path / "Dockerfile"
+    path.write_bytes(text.encode())  # keep the \r and \n exactly as written
+    assert read_dockerfile(path) == expected
+
+
+def test_a_line_too_deeply_nested_to_lex_is_an_error_not_a_traceback(tmp_path):
+    # BuildKit (Go) reads this; Python's recursion limit stops wheelgap, so it says so instead of guessing.
+    text = "FROM python:3.13\nRUN cat <<EOF " + "${a:-" * 5000 + "}" * 5000 + "\nEOF\n"
+    with pytest.raises(DockerfileError, match="nested too deeply"):
+        read_dockerfile(_dockerfile(tmp_path, text))
 
 
 def _docs(*names):
@@ -492,6 +542,15 @@ def test_escape_directive_rules(tmp_path):
         ("FROM python:3.13-alpine3.1\u0662\n", "invalid tag"),
         ("FROM ghcr.io/astral-sh/uv:0.\u0665-python3.13-alpine\n", "invalid tag"),
         ("FROM python:3.1٣\n", "invalid tag"),  # an Arabic-Indic digit isn't allowed in a Docker tag
+        # A heredoc the file ends in.
+        ("FROM python:3.13\nRUN <<EOF\necho hi\n", "unterminated heredoc <<EOF"),
+        ("FROM python:3.13\nRUN <<EOF\n\tEOF\n", "unterminated heredoc <<EOF"),  # only <<- strips tabs
+        ("FROM python:3.13\nRUN <<EOF\nEOF \n", "unterminated heredoc <<EOF"),  # trailing spaces stay
+        ("FROM python:3.13\nRUN <<A <<B\nA\n", "unterminated heredoc <<B"),
+        ("FROM python:3.13\nRUN cat <<EOF \\", "unterminated heredoc <<EOF"),  # ends mid-continuation too
+        ("FROM python:3.13\nRUN echo $((1 << BITS))\n", r"unterminated heredoc <<BITS\)\)"),
+        # Outside a heredoc, a Python import is a FROM with the wrong arguments.
+        ("FROM python:3.13\nfrom app import main\n", "expected 'IMAGE' or 'IMAGE AS NAME'"),
     ],
 )
 def test_dockerfiles_docker_rejects(tmp_path, text, message):
