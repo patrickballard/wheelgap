@@ -7,32 +7,37 @@ back to that handshake. Like the rest of wheelgap it needs only the standard lib
 
 Tools (all read-only; they look packages up on PyPI, or the index in WHEELGAP_INDEX_URL):
 - check_package: one package (latest release or a given version) on each target.
-- check_lockfile: every package a lockfile or project directory installs, and which targets lack a wheel.
+- check_lockfile: what `wheelgap PATH --json` reports, so project config, notes and skipped packages match the CLI.
 - list_targets: the platform names the other tools accept.
 """
 
 from __future__ import annotations
 
 import contextlib
+import io
 import json
+import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, BinaryIO
 
+from packaging.version import InvalidVersion, Version
+
 from . import __version__
-from .api import Result, check_lockfile, check_package, make_targets, running_python
+from .api import Result, check_package, make_targets, running_python
 from .check import Status
-from .pyodide import PyodideLockError
 from .sources import SourceError
 from .targets import (
     ALIASES,
+    DEFAULT_GLIBC,
+    DEFAULT_MACOS,
+    DEFAULT_MUSL,
     DEFAULT_PLATFORMS,
     EVERY_NATIVE_PLATFORM,
     MOBILE_PLATFORMS,
     NATIVE_PLATFORMS,
     PLATFORMS,
-    Target,
     TargetError,
 )
 
@@ -50,14 +55,17 @@ INTERNAL_ERROR = -32603
 INSTRUCTIONS = (
     "wheelgap tells you whether pip or uv can install a package from a prebuilt wheel on a platform, or will have to "
     "build it from source (or can't install it at all). Use check_lockfile on a project's uv.lock, poetry.lock, "
-    "pylock.toml, Pipfile.lock or requirements.txt before changing its deployment platforms or Docker base image, and "
-    "check_package before adding a dependency. Pass the project's Python version: results differ between versions."
+    "pdm.lock, pylock.toml, Pipfile.lock or requirements.txt before changing the platforms it deploys to, and "
+    "check_package before adding a dependency. Pass the project's Python version: results differ between versions. "
+    "Linux results assume a glibc (manylinux) or musl version: pass the one your image or distro has."
 )
 
 _STATUS_HELP = (
     "Statuses: 'wheel' (a compatible wheel exists), 'source' (no wheel, so installers build the sdist and need a "
-    "compiler and headers), 'missing' (no wheel and no sdist: install fails), 'unknown' (the lookup failed), 'n/a' "
-    "(environment markers say it isn't installed there), 'bundled' (Pyodide ships its own build)."
+    "compiler and headers), 'missing' (nothing installable: no wheel and no sdist, or, on pyodide, iOS and Android, "
+    "which can't build sdists, no wheel), 'unknown' (the lookup failed: not a pass), 'n/a' (environment markers say "
+    "it isn't installed there), 'bundled' (Pyodide ships its own build). On pyodide, check_package doesn't know "
+    "which packages Pyodide ships itself (numpy and many others), so those show 'source' or 'missing'."
 )
 
 _PYTHON_PROP = {
@@ -73,6 +81,14 @@ _TARGETS_PROP = {
         "list_targets gives every name."
     ),
 }
+_VERSION_PROPS = {
+    "glibc": {
+        "type": "string",
+        "description": f"glibc version for linux-* targets, e.g. '2.28' for a RHEL 8 image. Default: {DEFAULT_GLIBC}.",
+    },
+    "musl": {"type": "string", "description": f"musl version for musl-* (Alpine) targets. Default: {DEFAULT_MUSL}."},
+    "macos": {"type": "string", "description": f"Oldest macOS version to support. Default: {DEFAULT_MACOS}."},
+}
 _READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}
 
 TOOLS: list[dict[str, Any]] = [
@@ -81,18 +97,24 @@ TOOLS: list[dict[str, Any]] = [
         "title": "Check a package's wheels",
         "description": (
             "Check whether one PyPI package has a prebuilt wheel for each target platform and Python. Returns each "
-            "target's status, the targets with a gap, and ok (true if every target installs without building). "
-            + _STATUS_HELP
+            "target's status, the targets with a gap, ok (true only if every target installs without building) and "
+            "the libc and macOS versions assumed. " + _STATUS_HELP
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "The package name, e.g. 'numpy'."},
-                "version": {"type": "string", "description": "An exact version, e.g. '2.3.4'. Default: the latest."},
+                "name": {"type": "string", "description": "The package name alone, e.g. 'numpy'."},
+                "version": {
+                    "type": "string",
+                    "description": "An exact version, e.g. '2.3.4'. Default: the latest release, which may not "
+                    "support an older Python (it then shows gaps an older release wouldn't have).",
+                },
                 "python": _PYTHON_PROP | {"description": _PYTHON_PROP["description"] + " Default: the server's."},
                 "targets": _TARGETS_PROP,
+                **_VERSION_PROPS,
             },
             "required": ["name"],
+            "additionalProperties": False,
         },
         "annotations": _READ_ONLY,
     },
@@ -100,9 +122,13 @@ TOOLS: list[dict[str, Any]] = [
         "name": "check_lockfile",
         "title": "Check a lockfile's wheels",
         "description": (
-            "Check every package a lockfile installs (uv.lock, poetry.lock, pylock.toml, Pipfile.lock, pdm.lock, "
-            "requirements.txt, or a project directory containing one) and report the packages without a wheel on "
-            "some target. Environment markers are respected. " + _STATUS_HELP
+            "Check every package a lockfile installs (uv.lock, poetry.lock, pdm.lock, pylock.toml, Pipfile.lock, "
+            "requirements.txt, or a project directory containing one), exactly as the wheelgap command line does, and "
+            "report the packages without a wheel on some target. Environment markers, .python-version and the "
+            "project's [tool.wheelgap] settings (targets, python, glibc, ignore, offline, index-url, ...) apply; "
+            "arguments given here override them. Packages from git, paths, URLs or private indexes are listed under "
+            "'skipped': they were NOT checked. 'notes' says when an answer may be incomplete. Requirements files are "
+            "looked up on the index. " + _STATUS_HELP
         ),
         "inputSchema": {
             "type": "object",
@@ -114,16 +140,18 @@ TOOLS: list[dict[str, Any]] = [
                 },
                 "python": _PYTHON_PROP
                 | {
-                    "description": _PYTHON_PROP["description"] + " Default: .python-version next to the lockfile, "
-                    "else the server's."
+                    "description": _PYTHON_PROP["description"] + " Default: [tool.wheelgap] python, then "
+                    ".python-version next to the lockfile, else the server's."
                 },
                 "targets": _TARGETS_PROP,
+                **_VERSION_PROPS,
                 "offline": {
                     "type": "boolean",
                     "description": "Use only the files recorded in the lockfile; never contact the index.",
                 },
             },
             "required": ["path"],
+            "additionalProperties": False,
         },
         "annotations": _READ_ONLY,
     },
@@ -131,7 +159,7 @@ TOOLS: list[dict[str, Any]] = [
         "name": "list_targets",
         "title": "List target platforms",
         "description": "List the platform names and groups that check_package and check_lockfile accept.",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         "annotations": _READ_ONLY | {"openWorldHint": False},
     },
 ]
@@ -139,6 +167,18 @@ TOOLS: list[dict[str, Any]] = [
 
 class ToolError(Exception):
     """A problem with the tool's arguments or input, reported to the model as a tool result with isError."""
+
+
+_PYTHON_RE = re.compile(r"\d+\.\d+t?", re.ASCII)
+_NAME_RE = re.compile(r"[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?", re.ASCII)
+_GAP = {Status.SOURCE.value, Status.MISSING.value, Status.UNKNOWN.value}
+
+
+def _check_keys(tool: str, args: dict[str, Any]) -> None:
+    """Models guess argument names ('platforms', 'python_version'): refuse them rather than ignore them."""
+    known = next(t for t in TOOLS if t["name"] == tool)["inputSchema"]["properties"]
+    if unknown := sorted(set(args) - set(known)):
+        raise ToolError(f"unknown argument(s): {', '.join(unknown)} (accepted: {', '.join(known) or 'none'})")
 
 
 def _string(args: dict[str, Any], key: str, *, required: bool = False) -> str | None:
@@ -152,73 +192,129 @@ def _string(args: dict[str, Any], key: str, *, required: bool = False) -> str | 
     return value
 
 
-def _targets(args: dict[str, Any], default_python: str | list[str] | None) -> list[Target]:
+def _platforms(args: dict[str, Any]) -> list[str]:
     platforms = args.get("targets")
-    if platforms is not None and (not isinstance(platforms, list) or not all(isinstance(p, str) for p in platforms)):
+    if platforms is None:
+        return []
+    if not isinstance(platforms, list) or not all(isinstance(p, str) for p in platforms):
         raise ToolError("'targets' must be an array of strings")
-    python = _string(args, "python")
-    if python is not None and not python.strip():
-        python = None
-    try:
-        return make_targets(python or default_python, platforms or None)
-    except TargetError as e:
-        raise ToolError(str(e)) from e
+    return [p.strip() for p in platforms if p.strip()]
 
 
-def _result_dict(result: Result) -> dict[str, Any]:
-    out: dict[str, Any] = result.to_dict()
-    out["ok"] = result.ok
-    out["gaps"] = [t.label(True) for t in result.gaps]
+def _pythons(args: dict[str, Any]) -> list[str]:
+    python = _string(args, "python") or ""
+    parts = [p.strip() for p in python.split(",") if p.strip()]
+    if bad := [p for p in parts if not _PYTHON_RE.fullmatch(p)]:
+        raise ToolError(f"can't read Python version(s) {', '.join(map(repr, bad))} (expected e.g. '3.13' or '3.14t')")
+    return parts
+
+
+def _versions(args: dict[str, Any]) -> dict[str, str]:
+    out = {}
+    for key in _VERSION_PROPS:
+        value = _string(args, key)
+        if value is not None and value.strip():
+            out[key] = value.strip()
     return out
 
 
 def _check_package(args: dict[str, Any]) -> dict[str, Any]:
-    name = _string(args, "name", required=True)
-    assert name is not None
-    version = _string(args, "version")
-    targets = _targets(args, None)
-    result = check_package(name.strip(), version.strip() if version and version.strip() else None, targets)
-    out = _result_dict(result)
+    _check_keys("check_package", args)
+    name = (_string(args, "name", required=True) or "").strip()
+    if not _NAME_RE.fullmatch(name):
+        raise ToolError(f"{name!r} isn't a package name: pass the name alone, and an exact version as 'version'")
+    version = (_string(args, "version") or "").strip() or None
+    if version is not None:
+        try:
+            Version(version)
+        except InvalidVersion:
+            raise ToolError(f"'version' must be an exact version such as '2.3.4', not {version!r}") from None
+    versions = _versions(args)
+    try:
+        targets = make_targets(_pythons(args) or None, _platforms(args) or None, **versions)
+    except TargetError as e:
+        raise ToolError(str(e)) from e
+    result: Result = check_package(name, version, targets)
+    out: dict[str, Any] = result.to_dict()
+    out["ok"] = result.ok
+    out["gaps"] = [t.label(True) for t in result.gaps]
     out["targets"] = [t.label(True) for t in targets]
+    out["assumes"] = {
+        "glibc": versions.get("glibc", DEFAULT_GLIBC),
+        "musl": versions.get("musl", DEFAULT_MUSL),
+        "macos": versions.get("macos", DEFAULT_MACOS),
+    }
     return out
 
 
 def _check_lockfile(args: dict[str, Any]) -> dict[str, Any]:
-    from .cli import read_python_version  # the CLI's own .python-version rules
+    """Run the command line itself with --json, so config, notes and skipped packages are exactly the CLI's."""
+    from . import cli
 
-    raw = _string(args, "path", required=True)
-    assert raw is not None
-    offline = args.get("offline", False)
-    if not isinstance(offline, bool):
+    _check_keys("check_lockfile", args)
+    raw = _string(args, "path", required=True) or ""
+    offline = args.get("offline")
+    if offline is not None and not isinstance(offline, bool):
         raise ToolError("'offline' must be true or false")
     path = Path(raw).expanduser()
     if not path.exists():
         raise ToolError(f"{raw}: no such file or directory (pass an absolute path)")
-    folder = path if path.is_dir() else path.parent
-    targets = _targets(args, read_python_version(folder) or None)
+    # --name=value forms, and -- before the path, so no value can be read as another option.
+    argv = ["--json"]
+    argv += [f"--python={p}" for p in _pythons(args)]
+    argv += [f"--target={p}" for p in _platforms(args)]
+    argv += [f"--{key}={value}" for key, value in _versions(args).items()]
+    if offline:
+        argv.append("--offline")
+    argv += ["--", str(path)]
+    out, err = io.StringIO(), io.StringIO()
     try:
-        results = check_lockfile(path, targets, offline=offline)
-    except (SourceError, PyodideLockError) as e:
-        raise ToolError(str(e)) from e
-    except OSError as e:
-        raise ToolError(f"{raw}: {e.strerror or e}") from e
-    gaps = [r for r in results if not r.ok]
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = cli.main(argv)
+    except SystemExit as e:  # argparse rejected a value
+        code = e.code if isinstance(e.code, int) else 2
+    messages = [line.removeprefix("wheelgap: ") for line in err.getvalue().splitlines() if line.strip()]
+    notes = [m.removeprefix("note: ") for m in messages if m.startswith("note: ")]
+    if code not in (0, 1):
+        errors = [m.removeprefix("error: ") for m in messages if not m.startswith("note: ")]
+        raise ToolError("; ".join(errors) or f"wheelgap exited with status {code}")
+    data = json.loads(out.getvalue())
+    # The CLI leaves the Python out of labels when there's only one; always give it, as check_package does.
+    label = {t["label"]: f"{t['python']} {t['platform']}" for t in data["targets"]}
+    platform_of = {t["label"]: t["platform"] for t in data["targets"]}
+    ignored_on = {i["name"]: set(i["platforms"]) for i in data["ignored_targets"]}
+    gaps = []
+    for package in data["packages"]:
+        cells = [
+            label[cell]
+            for cell, status in package["results"].items()
+            if status in _GAP and platform_of[cell] not in ignored_on.get(package["name"], ())
+        ]
+        if cells:
+            results = {label[cell]: status for cell, status in package["results"].items()}
+            gaps.append(package | {"results": results, "gaps": cells})
     return {
         "path": str(path.resolve()),
-        "targets": [t.label(True) for t in targets],
-        "packages": len(results),
+        "targets": list(label.values()),
+        "packages": data["summary"]["packages"],
         "ok": not gaps,
-        "unknown": sum(1 for r in gaps if Status.UNKNOWN in r.statuses.values()),
-        "gaps": [_result_dict(r) for r in gaps],
+        "unknown": sum(1 for g in gaps if Status.UNKNOWN.value in g["results"].values()),
+        "gaps": gaps,
+        "skipped": data["skipped"],
+        "ignored": data["ignored"],
+        "ignored_targets": data["ignored_targets"],
+        "notes": notes,
     }
 
 
 def _list_targets(args: dict[str, Any]) -> dict[str, Any]:
+    _check_keys("list_targets", args)
     return {
         "platforms": list(PLATFORMS),
         "default": list(DEFAULT_PLATFORMS),
         "groups": {"all": NATIVE_PLATFORMS, "everything": EVERY_NATIVE_PLATFORM, "mobile": MOBILE_PLATFORMS},
         "aliases": dict(ALIASES),
+        "defaults": {"glibc": DEFAULT_GLIBC, "musl": DEFAULT_MUSL, "macos": DEFAULT_MACOS},
         "server_python": running_python(),
     }
 
@@ -249,8 +345,8 @@ class Server:
         if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
             return _error(_id(message), INVALID_REQUEST, "not a JSON-RPC 2.0 message")
         method = message.get("method")
-        if "id" not in message:  # a notification (initialized, cancelled, ...) or a response: nothing to send
-            return None
+        if "id" not in message or ("method" not in message and ("result" in message or "error" in message)):
+            return None  # a notification (initialized, cancelled, ...) or a response to us: nothing to send
         msg_id = message["id"]
         if not isinstance(msg_id, (str, int)) or isinstance(msg_id, bool):
             return _error(None, INVALID_REQUEST, "id must be a string or an integer")
@@ -269,7 +365,7 @@ class Server:
             return _reply(msg_id, {"tools": TOOLS})
         if method == "tools/call":
             name = params.get("name")
-            if name not in _HANDLERS:
+            if not isinstance(name, str) or name not in _HANDLERS:
                 return _error(msg_id, INVALID_PARAMS, f"unknown tool: {name!r}")
             arguments = params.get("arguments")
             if arguments is None:
@@ -294,7 +390,7 @@ class Server:
             # wheelgap's own messages go to stderr already; this keeps any stray print off the protocol stream.
             with contextlib.redirect_stdout(sys.stderr):
                 data = _HANDLERS[name](arguments)
-        except (ToolError, TargetError, SourceError, ValueError) as e:
+        except (ToolError, TargetError, SourceError) as e:
             return {"content": [{"type": "text", "text": str(e)}], "isError": True}
         except Exception as e:  # a bug: report it to the model rather than end the connection
             return {"content": [{"type": "text", "text": f"internal error: {type(e).__name__}: {e}"}], "isError": True}
@@ -325,9 +421,9 @@ def serve(stdin: BinaryIO, stdout: BinaryIO) -> None:
         if not line:
             continue
         try:
-            message = json.loads(line.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as e:
-            reply: object = _error(None, PARSE_ERROR, f"parse error: {e}")
+            message = json.loads(line.decode("utf-8-sig"))
+        except (ValueError, RecursionError) as e:  # bad UTF-8 or JSON, an over-long integer, absurd nesting
+            reply: object = _error(None, PARSE_ERROR, f"parse error: {type(e).__name__}")
         else:
             try:
                 reply = server.handle(message)

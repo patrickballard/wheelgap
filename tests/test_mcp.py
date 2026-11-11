@@ -59,12 +59,25 @@ def test_notifications_get_no_reply_and_unknown_methods_are_errors():
         (b'{"jsonrpc": "2.0", "id": true, "method": "ping"}\n', mcp.INVALID_REQUEST),
         (b'{"jsonrpc": "2.0", "id": 1, "method": "ping", "params": []}\n', mcp.INVALID_PARAMS),
         (b"[]\n", mcp.INVALID_REQUEST),
+        (b'{"jsonrpc": "2.0", "id": ' + b"9" * 5000 + b', "method": "ping"}\n', mcp.PARSE_ERROR),
+        (b"[" * 100_000 + b"\n", mcp.PARSE_ERROR),
+        (b'{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": ["x"]}}\n', mcp.INVALID_PARAMS),
     ],
 )
 def test_bad_messages_get_errors_and_the_server_keeps_going(raw, code):
     replies = run(raw=raw + b'\n{"jsonrpc": "2.0", "id": 7, "method": "ping"}\r\n')
     assert replies[0]["error"]["code"] == code
     assert replies[-1] == {"jsonrpc": "2.0", "id": 7, "result": {}}
+
+
+def test_responses_from_the_client_get_no_reply():
+    replies = run({"jsonrpc": "2.0", "id": 3, "result": {}}, {"jsonrpc": "2.0", "id": 4, "method": "ping"})
+    assert [r["id"] for r in replies] == [4]
+
+
+def test_utf8_bom_on_the_first_line():
+    (reply,) = run(raw=b"\xef\xbb\xbf" + json.dumps(init()).encode() + b"\n")
+    assert reply["result"]["serverInfo"]["name"] == "wheelgap"
 
 
 def test_batches_reply_with_a_list():
@@ -92,7 +105,19 @@ def test_check_package(fake_pypi):
     assert data["ok"] is False
     assert data["gaps"] == ["3.13 linux-aarch64"]
     assert data["version"] == "311"
+    assert data["assumes"] == {"glibc": "2.36", "musl": "1.2", "macos": "14.0"}
     assert fake_pypi == ["https://pypi.org/pypi/winonly/json"]
+
+
+def test_check_package_pinned_version_and_glibc(fake_pypi):
+    (_, reply) = run(
+        init(),
+        call("check_package", name="fastlib", version="2.0.0", python="3.13", targets=["linux-x86_64"], glibc="2.17"),
+    )
+    data = reply["result"]["structuredContent"]
+    assert fake_pypi == ["https://pypi.org/pypi/fastlib/2.0.0/json"]
+    assert data["results"] == {"3.13 linux-x86_64": "wheel"}  # manylinux_2_17 still fits glibc 2.17
+    assert data["assumes"]["glibc"] == "2.17"
 
 
 def test_structured_content_only_from_2025_06_18(fake_pypi):
@@ -117,6 +142,10 @@ def test_check_package_lookup_failure_is_unknown_not_ok(fake_pypi):
         ({"name": "numpy", "targets": "linux-aarch64"}, "'targets' must be an array of strings"),
         ({"name": "numpy", "targets": ["linux-sparc"]}, "linux-sparc"),
         ({"name": "numpy", "python": "three"}, "three"),
+        ({"name": "numpy", "platforms": ["win32"]}, "unknown argument(s): platforms"),
+        ({"name": "numpy==2.0"}, "isn't a package name"),
+        ({"name": "numpy", "version": ">=2"}, "exact version"),
+        ({"name": "numpy", "glibc": "new"}, "glibc"),
     ],
 )
 def test_bad_arguments_are_tool_errors_without_lookups(fake_pypi, arguments, message):
@@ -143,6 +172,66 @@ def test_check_lockfile_reports_only_gaps(fake_pypi, fixtures):
         "nativeext": {"3.13 linux-x86_64": "source"},
         "puresdist": {"3.13 linux-x86_64": "source"},
     }
+
+
+def test_check_lockfile_lists_skipped_packages(fake_pypi, fixtures):
+    (_, reply) = run(
+        init(), call("check_lockfile", path=str(fixtures / "uvproj"), python="3.13", targets=["linux-x86_64"])
+    )
+    data = reply["result"]["structuredContent"]
+    assert {s["name"]: s["reason"] for s in data["skipped"]} == {"demo": "editable", "gitdep": "git"}
+
+
+def test_check_lockfile_uses_project_config_and_arguments_win(fake_pypi, fixtures):
+    path = str(fixtures / "configproj")
+    (_, configured, explicit) = run(
+        init(),
+        call("check_lockfile", path=path),
+        call("check_lockfile", 2, path=path, python="3.13", targets=["linux-x86_64"]),
+    )
+    assert configured["result"]["structuredContent"]["targets"] == ["3.13 win-amd64", "3.14t win-amd64"]
+    assert explicit["result"]["structuredContent"]["targets"] == ["3.13 linux-x86_64"]
+
+
+def test_check_lockfile_offline_config_means_no_lookups(fake_pypi, tmp_path):
+    (tmp_path / "requirements.txt").write_text("purewheel==3.1\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text("[tool.wheelgap]\noffline = true\n", encoding="utf-8")
+    (_, reply) = run(init(), call("check_lockfile", path=str(tmp_path / "requirements.txt"), python="3.13"))
+    assert reply["result"]["isError"] is True
+    assert "offline" in reply["result"]["content"][0]["text"]
+    assert not fake_pypi
+
+
+def test_check_lockfile_ignores_from_config(fake_pypi, tmp_path, fixtures):
+    (tmp_path / "uv.lock").write_bytes((fixtures / "uvproj" / "uv.lock").read_bytes())
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.wheelgap]\nignore = ["nativeext:linux-x86_64", "puresdist"]\n', encoding="utf-8"
+    )
+    (_, reply) = run(
+        init(),
+        call("check_lockfile", path=str(tmp_path), python="3.13", targets=["linux-x86_64", "win-amd64"], offline=True),
+    )
+    data = reply["result"]["structuredContent"]
+    assert data["ignored"] == ["puresdist"]
+    # nativeext's linux gap is accepted; its Windows gap still counts.
+    assert [(g["name"], g["gaps"]) for g in data["gaps"]] == [("nativeext", ["3.13 win-amd64"])]
+
+
+def test_check_lockfile_passes_on_notes(fake_pypi, fixtures):
+    (_, reply) = run(
+        init(),
+        call("check_lockfile", path=str(fixtures / "uvproj"), python="3.11", targets=["linux-x86_64"], offline=True),
+    )
+    (note,) = reply["result"]["structuredContent"]["notes"]
+    assert "may show false gaps" in note
+    assert not fake_pypi
+
+
+def test_check_lockfile_explicit_python_beats_python_version_file(fake_pypi, tmp_path, fixtures):
+    (tmp_path / "uv.lock").write_bytes((fixtures / "uvproj" / "uv.lock").read_bytes())
+    (tmp_path / ".python-version").write_text("3.12\n", encoding="utf-8")
+    (_, reply) = run(init(), call("check_lockfile", path=str(tmp_path), python="3.13", offline=True))
+    assert {t.split()[0] for t in reply["result"]["structuredContent"]["targets"]} == {"3.13"}
 
 
 def test_check_lockfile_uses_python_version_file(fake_pypi, tmp_path, fixtures):
@@ -205,6 +294,23 @@ def test_non_ascii_output_stays_on_one_line(monkeypatch):
     mcp.serve(stdin, stdout)
     assert stdout.getvalue().count(b"\n") == 1
     assert json.loads(stdout.getvalue())["result"]["structuredContent"]["text"] == "naïve\nline"
+
+
+def test_real_stdio(fixtures):
+    import subprocess
+    import sys
+
+    messages = [init(), {"jsonrpc": "2.0", "method": "notifications/initialized"}, call("list_targets")]
+    proc = subprocess.run(
+        [sys.executable, "-m", "wheelgap.mcp"],
+        input=b"".join(json.dumps(m).encode() + b"\r\n" for m in messages),
+        capture_output=True,
+        timeout=60,
+        check=True,
+    )
+    replies = [json.loads(line) for line in proc.stdout.splitlines()]
+    assert [r["id"] for r in replies] == [0, 1]
+    assert "linux-aarch64" in replies[1]["result"]["structuredContent"]["platforms"]
 
 
 @pytest.mark.parametrize(("argv", "code"), [(["--version"], 0), (["--help"], 0), (["--bogus"], 2)])
