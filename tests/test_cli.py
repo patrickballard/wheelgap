@@ -1330,6 +1330,34 @@ def test_ignore_on_one_target_hidden_and_clean_lines(capsys, fixtures, output):
         assert "✓ All 2 packages have a wheel for every one of 2 targets, apart from 3 ignored gaps." in out
 
 
+def test_ignored_missing_with_counted_source_passes_fail_on_missing(capsys, fixtures):
+    # puresdist and nativeext build from source on Linux (counted) and are missing on iOS (ignored), so
+    # --fail-on missing passes and the summary names only the source builds. purewheel has a wheel on iOS.
+    ignore = "puresdist:ios-arm64,nativeext:ios-arm64,fastlib:ios-arm64,purewheel:ios-arm64"
+    args = (str(fixtures / "uvproj"), "-p", "3.13", "-t", "linux-x86_64,ios-arm64", "--color", "never", "--all")
+    code, out, err = run(capsys, *args, "--ignore", ignore, "--fail-on", "missing")
+    assert code == 0, err
+    assert "2 of 5 packages have gaps: 2 will build from source." in out
+    assert "can't install" not in out
+    assert "Source builds are allowed (--fail-on missing), so this run passes." in out
+    assert "purewheel  3.1      ✓             ✓\n" in out  # a wheel on an ignored target isn't marked
+    assert "puresdist  1.0      ● source      ✗ missing (ignored)\n" in out
+
+
+def test_cell_marks_only_ignored_gaps():
+    from wheelgap.check import Row
+    from wheelgap.sources import Package
+    from wheelgap.targets import build_targets
+
+    lin, ios = build_targets(["3.13"], ["linux-x86_64", "ios-arm64"])
+    row = Row(Package("a", "1"), {lin: Status.UNKNOWN, ios: Status.UNKNOWN}, ignored=frozenset({ios}))
+    assert cli.cell(row, ios) == ("? unknown (ignored)", "dim")
+    assert cli.cell(row, lin) == ("? unknown", "dim")
+    row = Row(Package("a", "1"), {lin: Status.SOURCE, ios: Status.WHEEL}, ignored=frozenset({ios}))
+    assert cli.cell(row, ios) == ("✓", "green")
+    assert cli.cell(row, lin) == ("● source", "yellow")
+
+
 def test_hidden_line_counts_wheels_and_ignored_gaps_apart():
     from wheelgap.check import Row
     from wheelgap.sources import Package
