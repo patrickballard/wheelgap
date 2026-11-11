@@ -1376,7 +1376,7 @@ def test_offline_from_config_never_contacts_the_index(capsys, tmp_path, fake_pyp
     assert code == 2 and not out and fake_pypi == []
     assert err == (
         "wheelgap: error: offline = true in [tool.wheelgap]: requirements.txt needs the index for 1 package "
-        "(fastlib); use a lockfile that lists each package's files, or drop offline = true in [tool.wheelgap]\n"
+        "(fastlib); use a lockfile that lists each package's files, or pass --online for this run\n"
     )
 
 
