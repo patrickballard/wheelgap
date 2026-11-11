@@ -14,7 +14,9 @@ from pathlib import Path
 
 import packaging
 from packaging.markers import InvalidMarker, Marker
+from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
 
 from . import __version__
 from .api import running_python
@@ -427,15 +429,29 @@ def render_explain(rows: list[Row], targets: list[Target], style: Style) -> list
 
 
 def bundled_version_differs(r: Row, lock: PyodideLock) -> bool:
-    """Pyodide ships a different version than the one pinned: micropip.install of the pin would fail."""
-    return bool(r.package.version) and r.package.version != lock.packages[r.package.key]
+    """Pyodide ships a version the input doesn't allow: micropip.install of that requirement would fail.
+
+    A pin is compared as a version (0.9 == 0.9.0), a range by whether it contains Pyodide's version, and a
+    requirement with neither (the index picked the newest release) never differs.
+    """
+    pkg, have = r.package, lock.packages[r.package.key]
+    if pkg.version_from_index:
+        return pkg.spec is not None and not SpecifierSet(pkg.spec).contains(have, prereleases=True)
+    if not pkg.version:
+        return False
+    try:
+        return Version(pkg.version) != Version(have)
+    except InvalidVersion:
+        return pkg.version != have
 
 
 def bundled_line(rows: list[Row], lock: PyodideLock) -> str:
     def one(r: Row) -> str:
-        have = lock.packages[r.package.key]
-        return f"{r.package.name} {have}" + (
-            f" (you pinned {r.package.version})" if bundled_version_differs(r, lock) else ""
+        have, pkg = lock.packages[r.package.key], r.package
+        if not bundled_version_differs(r, lock):
+            return f"{pkg.name} {have}"
+        return f"{pkg.name} {have} " + (
+            f"(outside {pkg.spec})" if pkg.version_from_index else f"(you pinned {pkg.version})"
         )
 
     noun = "package comes" if len(rows) == 1 else "packages come"

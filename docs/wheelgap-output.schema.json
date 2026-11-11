@@ -112,7 +112,7 @@
                     "type": "string"
                 },
                 "bundled_version_differs": {
-                    "description": "Present with bundled: true when the pinned version isn't the one Pyodide ships (it still counts as bundled).",
+                    "description": "Present with bundled: true when Pyodide's version isn't the one pinned, or is outside the required range (it still counts as bundled). Always false for an unpinned requirement.",
                     "type": "boolean"
                 }
             }

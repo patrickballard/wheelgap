@@ -242,3 +242,27 @@ def test_lock_that_is_not_a_json_object(tmp_path):
     bad.write_text("[]")
     with pytest.raises(PyodideLockError, match="not a pyodide-lock.json"):
         load_pyodide_lock(str(bad))
+
+
+# The index picks the version of an unpinned or ranged requirement, so only a pin, or a range Pyodide's version is
+# outside, can differ. A pin is compared as a version.
+@pytest.mark.parametrize(
+    "requirement,differs",
+    [("nowheels", False), ("nowheels>=0.5", False), ("nowheels>0.8", True), ("nowheels==0.9", True)],
+)
+def test_bundled_version_differs_only_for_a_pin_or_range_it_breaks(
+    capsys, fake_pypi, lock_with_other_version, requirement, differs
+):
+    argv = (requirement, "-p", "3.13", "-t", "pyodide", "--pyodide-lock", lock_with_other_version, "--json")
+    code, out, _ = run(capsys, *argv)
+    (package,) = json.loads(out)["packages"]
+    assert package["bundled"] == "0.8" and package["bundled_version_differs"] is differs
+
+
+def test_a_pin_is_compared_as_a_version(capsys, fake_pypi, tmp_path):
+    path = tmp_path / "pyodide-lock.json"
+    info = {"abi_version": "2025_0", "python": "3.13.2", "version": "0.29.0"}
+    path.write_text(json.dumps({"info": info, "packages": {"nowheels": {"name": "nowheels", "version": "0.9.0"}}}))
+    code, out, _ = run(capsys, "nowheels==0.9", "-p", "3.13", "-t", "pyodide", "--pyodide-lock", str(path), "--json")
+    (package,) = json.loads(out)["packages"]
+    assert package["bundled"] == "0.9.0" and package["bundled_version_differs"] is False
