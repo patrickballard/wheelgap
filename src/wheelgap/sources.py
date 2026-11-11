@@ -112,6 +112,10 @@ class Source:
     # pdm.lock only: each package's `groups` list (None for a package that records none, as before PDM 2.x),
     # kept so --group/--only-group/--no-dev can pick packages. None when the input isn't a pdm.lock.
     pdm_groups: list[list[str] | None] | None = None
+    # pdm.lock only: its [metadata] groups (canonical; None if it has none), and whether its [metadata] strategy has
+    # inherit_metadata, without which PDM doesn't go by package groups.
+    pdm_locked_groups: list[str] | None = None
+    pdm_inherit_metadata: bool = False
     pdm_pyproject: Path | None = None
     # poetry.lock after a group selection: the packages it left out, which were still read (for --ignore notes).
     unselected_keys: set[str] = field(default_factory=set)
@@ -239,10 +243,11 @@ def select_uv_dependencies(
     configured_extras: bool = False,
     poetry: bool = True,
 ) -> None:
-    """Apply `selection` to the uv.lock sources, and its groups to Poetry 2.x poetry.lock sources. With strict
-    (selectors from the command line), other inputs are an error; otherwise (from [tool.wheelgap]) they're left as
-    they are. configured_extras: the extras come from [tool.wheelgap], which apply to uv.lock inputs only, so a
-    poetry.lock doesn't reject them. poetry=False leaves poetry.lock inputs as they are (only extras configured)."""
+    """Apply `selection` to the uv.lock sources, and its groups to Poetry 2.x poetry.lock and pdm.lock sources. With
+    strict (selectors from the command line), other inputs are an error; otherwise (from [tool.wheelgap]) they're left
+    as they are. configured_extras: the extras come from [tool.wheelgap], which apply to uv.lock inputs only, so a
+    poetry.lock or pdm.lock doesn't reject them. poetry=False leaves poetry.lock and pdm.lock inputs as they are (only
+    extras configured)."""
     if selection.only_groups and (selection.extras or selection.all_extras):
         raise SourceError("--only-group cannot be combined with --extra or --all-extras")
     if selection.no_dev and "dev" in selection.groups | selection.only_groups:
@@ -258,8 +263,8 @@ def select_uv_dependencies(
             raise SourceError("extra/group selection requires uv.lock inputs")
     for source in sources:
         if source.pdm_groups is not None:
-            # A lock that records no package groups (before PDM 2.x): configured groups leave it as it is.
-            if poetry and (strict or all(g is not None for g in source.pdm_groups)):
+            # A lock without package groups or inherit_metadata: configured groups leave it as it is.
+            if poetry and (strict or (source.pdm_inherit_metadata and all(g is not None for g in source.pdm_groups))):
                 _select_pdm_groups(source, selection)
             continue
         if source.poetry_tables is not None:
@@ -353,32 +358,42 @@ def _select_poetry_groups(source: Source, selection: UvSelection) -> None:
 
 
 def _select_pdm_groups(source: Source, selection: UvSelection) -> None:
-    """Keep the pdm.lock packages that `pdm install` would install for `selection`, with PDM's meanings: `default`
-    and every dev group by default, `--group` adds a group (like `pdm install -G`; the [project]
-    optional-dependencies groups count only then), `--no-dev` leaves out `dev`, and `--only-group` installs only
-    the named groups (`default` too only if named)."""
+    """Keep the pdm.lock packages that `pdm install` would install for `selection`, with PDM's meanings: every group
+    the lock was made for ([metadata] groups) by default, `--no-dev` leaves out `dev` (like `pdm install --without
+    dev`), `--group` only checks that a group is locked, and `--only-group` installs only the named groups (`default`
+    too only if named). A package counts if any of its groups is selected."""
     per_package = source.pdm_groups or []
-    if any(g is None for g in per_package):
-        raise SourceError(f"{source.label}: group selection needs a pdm.lock that records package groups")
+    if not source.pdm_inherit_metadata or any(g is None for g in per_package):
+        raise SourceError(
+            f"{source.label}: group selection needs a pdm.lock with package groups "
+            "(locked with the inherit_metadata strategy)"
+        )
     package_groups = [[canonicalize_name(g) for g in groups or []] for groups in per_package]
-    known = {"default"} | {g for groups in package_groups for g in groups}
-    optional: set[str] = set()
-    pyproject = source.pdm_pyproject
-    if pyproject is not None and pyproject.is_file():
-        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        extras = data.get("project", {}).get("optional-dependencies")
-        optional = {canonicalize_name(name) for name in (extras if isinstance(extras, dict) else {})}
-        # Dev groups that lock no package are still known groups.
-        for table in (data.get("dependency-groups"), data.get("tool", {}).get("pdm", {}).get("dev-dependencies")):
-            known.update(canonicalize_name(name) for name in (table if isinstance(table, dict) else {}))
-        known |= optional
-    unknown = (selection.groups | selection.only_groups) - known
-    if unknown:
-        raise SourceError(f"{source.label}: unknown groups: {', '.join(sorted(unknown))}")
-    if selection.only_groups:
-        chosen = set(selection.only_groups | selection.groups)
-    else:
-        chosen = (known - optional) | selection.groups
+    if source.pdm_locked_groups is not None:
+        locked = set(source.pdm_locked_groups)
+    else:  # no [metadata] groups: the groups its packages record
+        locked = {"default"} | {g for groups in package_groups for g in groups}
+    asked = selection.groups | selection.only_groups
+    if asked - locked:
+        declared: set[str] = set()
+        pyproject = source.pdm_pyproject
+        if pyproject is not None and pyproject.is_file():
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            tables = (
+                data.get("project", {}).get("optional-dependencies"),
+                data.get("dependency-groups"),
+                data.get("tool", {}).get("pdm", {}).get("dev-dependencies"),
+            )
+            declared = {canonicalize_name(name) for table in tables if isinstance(table, dict) for name in table}
+        unknown = asked - locked - declared
+        if unknown:
+            raise SourceError(f"{source.label}: unknown groups: {', '.join(sorted(unknown))}")
+        unlocked = sorted(asked - locked)
+        raise SourceError(
+            f"{source.label}: groups not in the lock: {', '.join(unlocked)} "
+            f"(lock them with `pdm lock {' '.join(f'-G {name}' for name in unlocked)}`)"
+        )
+    chosen = set(selection.only_groups | selection.groups) if selection.only_groups else locked
     if selection.no_dev:
         chosen.discard("dev")
     kept = []
@@ -590,7 +605,10 @@ def _add_once(pkgs: list[Package], seen: dict[tuple[str, str | None], Package], 
 
 def parse_pdm_lock(path: Path) -> Source:
     data = tomllib.loads(path.read_text(encoding="utf-8"))
-    legacy_files = data.get("metadata", {}).get("files", {})
+    metadata = data.get("metadata", {})
+    legacy_files = metadata.get("files", {})
+    locked_groups = metadata.get("groups")
+    strategy = metadata.get("strategy")
     pkgs: list[Package] = []
     seen: dict[tuple[str, str | None], Package] = {}
     # Each package's groups, merged over its entries (PDM writes one per extras variant).
@@ -630,6 +648,12 @@ def parse_pdm_lock(path: Path) -> Source:
         path.name,
         pkgs,
         pdm_groups=[groups[(pkg.key, pkg.version)] for pkg in pkgs],
+        pdm_locked_groups=(
+            [canonicalize_name(g) for g in locked_groups if isinstance(g, str)]
+            if isinstance(locked_groups, list)
+            else None
+        ),
+        pdm_inherit_metadata=isinstance(strategy, list) and "inherit_metadata" in strategy,
         pdm_pyproject=path.parent / "pyproject.toml",
     )
 
