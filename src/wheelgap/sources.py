@@ -102,6 +102,8 @@ class Source:
     # by the groups Poetry records on them.
     poetry_tables: list[dict] | None = None
     poetry_pyproject: Path | None = None
+    # poetry.lock after a group selection: the packages it left out, which were still read (for --ignore notes).
+    unselected_keys: set[str] = field(default_factory=set)
 
 
 def pythons_outside_lock(source: Source, targets: Iterable[Target]) -> list[str]:
@@ -215,9 +217,18 @@ def uv_group_names(package: dict) -> frozenset[str]:
     )
 
 
-def select_uv_dependencies(sources: list[Source], selection: UvSelection, strict: bool = True) -> None:
-    """Apply `selection` to the uv.lock sources. With strict (selectors from the command line), other inputs are an
-    error; otherwise (from [tool.wheelgap]) they're left as they are."""
+def select_uv_dependencies(
+    sources: list[Source],
+    selection: UvSelection,
+    strict: bool = True,
+    *,
+    configured_extras: bool = False,
+    poetry: bool = True,
+) -> None:
+    """Apply `selection` to the uv.lock sources, and its groups to Poetry 2.x poetry.lock sources. With strict
+    (selectors from the command line), other inputs are an error; otherwise (from [tool.wheelgap]) they're left as
+    they are. configured_extras: the extras come from [tool.wheelgap], which apply to uv.lock inputs only, so a
+    poetry.lock doesn't reject them. poetry=False leaves poetry.lock inputs as they are (only extras configured)."""
     if selection.only_groups and (selection.extras or selection.all_extras):
         raise SourceError("--only-group cannot be combined with --extra or --all-extras")
     if selection.no_dev and "dev" in selection.groups | selection.only_groups:
@@ -225,14 +236,14 @@ def select_uv_dependencies(sources: list[Source], selection: UvSelection, strict
     if strict and (not sources or any(source.uv_packages is None for source in sources)):
         others = [source for source in sources if source.uv_packages is None]
         if sources and all(source.poetry_tables is not None for source in others):
-            if selection.extras or selection.all_extras:
+            if selection.all_extras or (selection.extras and not configured_extras):
                 raise SourceError("extra selection requires uv.lock inputs (poetry.lock supports groups only)")
         else:
             raise SourceError("extra/group selection requires uv.lock inputs")
     for source in sources:
         if source.poetry_tables is not None:
             # A Poetry 1.x lock doesn't record groups per package; configured groups leave it as it is.
-            if strict or source.edges is None:
+            if poetry and (strict or source.edges is None):
                 _select_poetry_groups(source, selection)
             continue
         if source.uv_packages is None:
@@ -290,7 +301,11 @@ def _select_poetry_groups(source: Source, selection: UvSelection) -> None:
     optional: set[str] = set()
     pyproject = source.poetry_pyproject
     if pyproject is not None and pyproject.is_file():
-        declared = tomllib.loads(pyproject.read_text(encoding="utf-8")).get("tool", {}).get("poetry", {})
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        # PEP 735 groups (Poetry 2.2+): an empty one is in no package's groups, but it's still a known group.
+        pep735 = data.get("dependency-groups")
+        known.update(canonicalize_name(name) for name in (pep735 if isinstance(pep735, dict) else {}))
+        declared = data.get("tool", {}).get("poetry", {})
         for name, group in (declared.get("group") or {}).items():
             known.add(canonicalize_name(name))
             if isinstance(group, dict) and group.get("optional") is True:
@@ -310,6 +325,8 @@ def _select_poetry_groups(source: Source, selection: UvSelection) -> None:
         if groups:
             pkg.markers = _poetry_markers(table, groups)
             kept.append(pkg)
+        else:
+            source.unselected_keys.add(pkg.key)
     source.packages = kept
     source.poetry_tables = None
 

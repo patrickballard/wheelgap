@@ -427,6 +427,14 @@ def test_ignore_note_counts_packages_the_selection_leaves_out(fixtures, capsys, 
     assert "devtool" not in err
 
 
+def test_ignore_note_counts_poetry_packages_the_selection_leaves_out(poetry_groups, capsys, fake_pypi):
+    # devonly is in the poetry.lock but not installed with --no-dev: ignoring it isn't a typo.
+    main([str(poetry_groups), "--no-dev", "--ignore", "devonly,nosuchpkg", "-t", "linux", "-p", "3.13"])
+    err = capsys.readouterr().err
+    assert "--ignore matches no package: nosuchpkg" in err
+    assert "devonly" not in err
+
+
 def test_configured_selection_leaves_other_inputs_alone(tmp_path, capsys, fake_pypi):
     (tmp_path / "pyproject.toml").write_text('[tool.wheelgap]\nextras = ["api"]\ngroups = ["docs"]\n')
     path = tmp_path / "requirements.txt"
@@ -546,3 +554,35 @@ def test_poetry_1x_lock_rejects_group_selection(tmp_path, capsys, fake_pypi):
     )
     assert main([str(tmp_path), "--no-dev"]) == 2
     assert "needs a poetry.lock from Poetry 2.x" in capsys.readouterr().err
+
+
+def test_poetry_lock_configured_extras_alone_select_nothing(poetry_groups, capsys, fake_pypi):
+    # Configured extras apply to uv.lock inputs only: they neither drop the optional docs group nor reject --no-dev.
+    with (poetry_groups / "pyproject.toml").open("a", encoding="utf-8") as f:
+        f.write('\n[tool.wheelgap]\nextras = ["api"]\n')
+    code, names = _poetry_names(capsys, [str(poetry_groups)])
+    assert code == 1 and {"app-dep", "devonly", "docstool"} <= names
+    code, names = _poetry_names(capsys, [str(poetry_groups), "--no-dev"])
+    assert code == 0 and names == {"app-dep"}
+
+
+def test_poetry_lock_knows_empty_pep735_groups(poetry_groups, capsys, fake_pypi):
+    with (poetry_groups / "pyproject.toml").open("a", encoding="utf-8") as f:
+        f.write("\n[dependency-groups]\nType_Check = []\n")
+    code, names = _poetry_names(capsys, [str(poetry_groups), "--no-dev", "--group", "type-check"])
+    assert code == 0 and names == {"app-dep"}
+
+
+def test_poetry_1x_lock_ignores_configured_groups(tmp_path, capsys, fake_pypi):
+    (tmp_path / "poetry.lock").write_text(
+        '[[package]]\nname = "app-dep"\nversion = "1.0"\ncategory = "main"\n'
+        'files = [{file = "app_dep-1.0-py3-none-any.whl", hash = "sha256:00"}]\n\n'
+        '[[package]]\nname = "devonly"\nversion = "1.0"\ncategory = "dev"\n'
+        'files = [{file = "devonly-1.0.tar.gz", hash = "sha256:00"}]\n\n'
+        '[metadata]\nlock-version = "2.0"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "pyproject.toml").write_text('[tool.wheelgap]\ngroups = ["docs"]\n', encoding="utf-8")
+    # No per-package groups to select by, so every package stays in.
+    code, names = _poetry_names(capsys, [str(tmp_path)])
+    assert code == 1 and names == {"app-dep", "devonly"}
