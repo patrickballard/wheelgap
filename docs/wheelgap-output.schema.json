@@ -59,13 +59,27 @@
         "summary": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["packages", "with_gaps"],
+            "required": ["packages", "with_gaps", "per_target"],
             "properties": {
                 "packages": {"type": "integer", "minimum": 0, "description": "Number of entries in packages."},
                 "with_gaps": {
                     "type": "integer",
                     "minimum": 0,
                     "description": "Packages whose results include source, missing or unknown."
+                },
+                "per_target": {
+                    "type": "object",
+                    "description": "Gap counts for each target with at least one gap, keyed by target label. Targets without gaps are left out, and it's empty when only one target is checked.",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["source", "missing", "unknown"],
+                        "properties": {
+                            "source": {"type": "integer", "minimum": 0, "description": "Packages that build from source on this target."},
+                            "missing": {"type": "integer", "minimum": 0, "description": "Packages that can't install on this target."},
+                            "unknown": {"type": "integer", "minimum": 0, "description": "Packages wheelgap couldn't check for this target."}
+                        }
+                    }
                 }
             }
         }

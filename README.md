@@ -120,6 +120,8 @@ Each cell in the table is one of:
 
 Packages that are fine everywhere are hidden; `--all` shows them.
 
+With several targets, the summary also counts the gaps on each target that has any (`musl-aarch64  1 from source, 1 missing`). `--markdown` lists the same counts, and `--json` has them as `summary.per_target`, keyed by target label: `{"musl-aarch64": {"source": 1, "missing": 1, "unknown": 0}}`, or `{}` when only one target is checked.
+
 `--explain` lists, for each gap, the wheels that were rejected and why, closest misses first:
 
 ```

@@ -497,7 +497,7 @@ def report_json(
             "packages": [package(r) for r in rows],
             "skipped": [{"name": p.name, "reason": p.skip} for p in skipped],
             "ignored": ignored,
-            "summary": {"packages": len(rows), "with_gaps": len(gaps)},
+            "summary": {"packages": len(rows), "with_gaps": len(gaps), "per_target": target_counts(gaps, targets)},
         },
         indent=2,
     )
@@ -598,26 +598,39 @@ def gap_summary(gaps: list[Row], total: int, style: Style) -> str:
     return f"{style.bold(f'{len(gaps)} of {total} {noun}')} {verb} gaps: " + ", ".join(parts) + "."
 
 
-def target_lines(gaps: list[Row], targets: list[Target], style: Style) -> list[str]:
+def target_counts(gaps: list[Row], targets: list[Target]) -> dict[str, dict[str, int]]:
+    """Gap counts for each target that has gaps, keyed by target label; empty for a single target.
+
+    Text, --json and --markdown all use this, so they can't disagree.
+    """
     if len(targets) < 2:
-        return []
+        return {}
 
     multi_py = len({target.python for target in targets}) > 1
-    lines = []
+    out = {}
     for target in targets:
         statuses = [row.results[target] for row in gaps]
-        parts = []
-        if source := statuses.count(Status.SOURCE):
-            parts.append(style.yellow(f"{source} from source"))
-        if missing := statuses.count(Status.MISSING):
-            parts.append(style.red(f"{missing} missing"))
-        if unknown := statuses.count(Status.UNKNOWN):
-            parts.append(style.dim(f"{unknown} unknown"))
-        if parts:
-            lines.append((target.label(multi_py), ", ".join(parts)))
+        counts = {s.value: statuses.count(s) for s in (Status.SOURCE, Status.MISSING, Status.UNKNOWN)}
+        if any(counts.values()):
+            out[target.label(multi_py)] = counts
+    return out
 
-    width = max((len(label) for label, _ in lines), default=0)
-    return [f"{label:<{width}}  {counts}" for label, counts in lines]
+
+def target_counts_text(counts: dict[str, int], style: Style) -> str:
+    parts = []
+    if source := counts["source"]:
+        parts.append(style.yellow(f"{source} from source"))
+    if missing := counts["missing"]:
+        parts.append(style.red(f"{missing} missing"))
+    if unknown := counts["unknown"]:
+        parts.append(style.dim(f"{unknown} unknown"))
+    return ", ".join(parts)
+
+
+def target_lines(gaps: list[Row], targets: list[Target], style: Style) -> list[str]:
+    per_target = target_counts(gaps, targets)
+    width = max(map(len, per_target), default=0)
+    return [f"{label:<{width}}  {target_counts_text(counts, style)}" for label, counts in per_target.items()]
 
 
 _MD_SPECIAL = re.compile(r"([\\`*_\[\]<>#|~&])")
@@ -679,6 +692,10 @@ def render_markdown(
             out += [f"{hidden} {noun} with wheels for every target hidden (`--all` to show).", ""]
 
     if gaps:
+        per_target = target_counts(gaps, targets)
+        if per_target:
+            out += [f"- {_md(label)}: {target_counts_text(counts, plain)}" for label, counts in per_target.items()]
+            out.append("")
         out += [gap_summary(gaps, len(rows), plain), ""]
         if source_allowed:
             out += ["Source builds are allowed (fail-on missing), so this run passes.", ""]
