@@ -77,7 +77,9 @@ def test_scan_writes_the_tracker_data(fake_pypi, tmp_path, capsys):
 
     assert data["summary"]["3.13 linux-x86_64"] == {"wheel": 2, "source": 1, "missing": 0, "unknown": 0, "bundled": 0}
     assert data["summary"]["3.13 pyodide"] == {"wheel": 1, "source": 0, "missing": 2, "unknown": 0, "bundled": 0}
-    assert "scanned 3 packages x 9 targets" in capsys.readouterr().err
+    assert data["pyodide_locks"] == []
+    err = capsys.readouterr().err
+    assert "scanned 3 packages x 9 targets" in err and "--pyodide-lock" not in err
 
 
 def test_scan_reports_lookup_errors(fake_pypi, tmp_path, capsys):
@@ -111,7 +113,8 @@ def test_scan_counts_what_pyodide_bundles(fake_pypi, fixtures, tmp_path, capsys)
     lock = str(fixtures / "pyodide-lock.json")  # Python 3.13
     args = ["--python", "3.13,3.14", "--top-packages", str(top), "--pyodide-lock", lock, "--max-error-rate", "1"]
     assert main(args) == 0
-    data = json.loads(capsys.readouterr().out)
+    out, err = capsys.readouterr()
+    data = json.loads(out)
     labels = [t["label"] for t in data["targets"]]
     fastlib = dict(zip(labels, data["packages"][1]["results"], strict=True))
     assert fastlib["3.13 pyodide"] == "bundled" and fastlib["3.14 pyodide"] == "missing"
@@ -119,6 +122,8 @@ def test_scan_counts_what_pyodide_bundles(fake_pypi, fixtures, tmp_path, capsys)
     # markupsafe is in the lock but its lookup failed: it stays unknown.
     assert data["summary"]["3.13 pyodide"] == {"wheel": 1, "source": 0, "missing": 1, "unknown": 1, "bundled": 1}
     assert data["summary"]["3.14 pyodide"]["bundled"] == 0
+    assert data["pyodide_locks"] == [{"python": "3.13", "pyodide_version": "0.29.0", "source": lock}]
+    assert "note: no --pyodide-lock for Python 3.14;" in err
 
 
 @pytest.mark.parametrize(

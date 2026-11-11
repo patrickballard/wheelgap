@@ -10,9 +10,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
 
 from .check import Row, Status
+from .sources import Package
 from .targets import PLATFORMS, Target
 
 # Pyodide's ABI version for each Python (the `abi_version` in pyodide-lock.json).
@@ -135,6 +138,23 @@ def bundles(lock: PyodideLock, key: str, target: Target, status: Status) -> bool
     error), and that must stay a gap rather than pass because the name happens to be in the lock.
     """
     return key in lock.packages and lock.applies_to(target) and status in (Status.SOURCE, Status.MISSING)
+
+
+def bundled_version_differs(pkg: Package, lock: PyodideLock) -> bool:
+    """Pyodide ships a version the input doesn't allow: micropip.install of that requirement would fail.
+
+    A pin is compared as a version (0.9 == 0.9.0), a range by whether it contains Pyodide's version, and a
+    requirement with neither (the index picked the newest release) never differs.
+    """
+    have = lock.packages[pkg.key]
+    if pkg.version_from_index:
+        return pkg.spec is not None and not SpecifierSet(pkg.spec).contains(have, prereleases=True)
+    if not pkg.version:
+        return False
+    try:
+        return Version(pkg.version) != Version(have)
+    except InvalidVersion:
+        return pkg.version != have
 
 
 def apply_bundled(rows: list[Row], targets: list[Target], lock: PyodideLock) -> None:

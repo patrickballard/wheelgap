@@ -19,7 +19,7 @@ from pathlib import Path
 
 from .check import Row, Status, check, status_for, wheel_tags
 from .offline import require_offline
-from .pyodide import PyodideLock, bundles, check_locks
+from .pyodide import PyodideLock, bundled_version_differs, bundles, check_locks
 from .pypi import fill_all, recheck_lock
 from .sources import Package, Source, find_lockfile, load_file, pythons_outside_lock
 from .targets import (
@@ -70,6 +70,10 @@ class Result:
     statuses: dict[Target, Status] = field(default_factory=dict)
     files: tuple[str, ...] = ()
     error: str | None = None
+    # With pyodide_locks: the version Pyodide ships, set when any target is BUNDLED, and whether it's outside the
+    # pin or range asked for (it still counts as ok, as in the CLI).
+    bundled_version: str | None = None
+    bundled_version_differs: bool = False
 
     @property
     def ok(self) -> bool:
@@ -89,20 +93,33 @@ class Result:
         )
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        out: dict[str, object] = {
             "name": self.name,
             "version": self.version,
             "error": self.error,
             "results": {t.label(True): s.value for t, s in self.statuses.items()},
         }
+        if self.bundled_version is not None:  # the same keys as the CLI's --json
+            out["bundled"] = self.bundled_version
+            out["bundled_version_differs"] = self.bundled_version_differs
+        return out
 
 
 def _result(pkg: Package, statuses: dict[Target, Status], pyodide_locks: Sequence[PyodideLock] = ()) -> Result:
+    applied = [lock for lock in pyodide_locks if any(bundles(lock, pkg.key, t, s) for t, s in statuses.items())]
     statuses = {
-        t: Status.BUNDLED if any(bundles(lock, pkg.key, t, s) for lock in pyodide_locks) else s
-        for t, s in statuses.items()
+        t: Status.BUNDLED if any(bundles(lock, pkg.key, t, s) for lock in applied) else s for t, s in statuses.items()
     }
-    return Result(pkg.name, pkg.version, statuses, tuple(pkg.files or ()), pkg.error)
+    return Result(
+        pkg.name,
+        pkg.version,
+        statuses,
+        tuple(pkg.files or ()),
+        pkg.error,
+        # Locks for different Pythons can ship different versions: report the first, and a difference in any.
+        applied[0].packages[pkg.key] if applied else None,
+        any(bundled_version_differs(pkg, lock) for lock in applied),
+    )
 
 
 def _package_targets(targets: Sequence[Target] | None) -> list[Target]:
@@ -117,7 +134,7 @@ def check_packages(
     targets: Sequence[Target] | None = None,
     *,
     workers: int = 16,
-    pyodide_locks: Sequence[PyodideLock] = (),
+    pyodide_locks: Iterable[PyodideLock] = (),
 ) -> list[Result]:
     """Check several packages, looking their files up on the index in parallel.
 
@@ -125,9 +142,11 @@ def check_packages(
     pyodide_locks (from wheelgap.pyodide.load_pyodide_lock, one per Python) mark a package that a lock's Pyodide
     ships itself as BUNDLED on pyodide targets for that lock's Python, where it would otherwise be SOURCE or MISSING.
     As with --pyodide-lock, a lock whose Python no pyodide target uses raises PyodideLockError (a ValueError) before
-    any lookup, and so do two locks for the same Python.
+    any lookup, and so do two locks for the same Python. A result with a BUNDLED target has bundled_version (the
+    version Pyodide ships) and bundled_version_differs (True when that's outside the pin or range asked for).
     """
     targets = _package_targets(targets)
+    pyodide_locks = tuple(pyodide_locks)
     if workers < 1:
         raise ValueError("workers must be at least 1")
     check_locks(pyodide_locks, targets)
@@ -147,12 +166,13 @@ def check_package(
     targets: Sequence[Target] | None = None,
     *,
     files: Iterable[str] | None = None,
-    pyodide_locks: Sequence[PyodideLock] = (),
+    pyodide_locks: Iterable[PyodideLock] = (),
 ) -> Result:
     """Check one package. Pass `files` (distribution filenames) to skip the index lookup.
 
     pyodide_locks work as in check_packages().
     """
+    pyodide_locks = tuple(pyodide_locks)
     if files is None:
         return check_packages([(name, version)], targets, pyodide_locks=pyodide_locks)[0]
     targets = _package_targets(targets)
@@ -168,7 +188,7 @@ def check_lockfile(
     *,
     online: bool = False,
     offline: bool = False,
-    pyodide_locks: Sequence[PyodideLock] = (),
+    pyodide_locks: Iterable[PyodideLock] = (),
 ) -> list[Result]:
     """Check every package a lockfile (or a project directory) installs on at least one target.
 
@@ -181,6 +201,7 @@ def check_lockfile(
     pyodide_locks work as in check_packages(), and are checked before the lockfile is read.
     """
     targets = _package_targets(targets)
+    pyodide_locks = tuple(pyodide_locks)
     if online and offline:
         raise ValueError("online=True and offline=True cannot be combined")
     check_locks(pyodide_locks, targets)

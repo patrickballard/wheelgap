@@ -24,7 +24,7 @@ from .api import Result, check_packages
 from .check import Status
 from .pyodide import PyodideLock, check_locks, load_pyodide_lock
 from .pypi import fetch_json
-from .targets import NATIVE_PLATFORMS, PYODIDE_PLATFORMS, Target, TargetError, build_targets, parse_python
+from .targets import NATIVE_PLATFORMS, PLATFORMS, PYODIDE_PLATFORMS, Target, TargetError, build_targets, parse_python
 
 TOP_PACKAGES_URL = "https://hugovk.dev/top-pypi-packages/top-pypi-packages.min.json"
 DEFAULT_PYTHONS = "3.13,3.14,3.14t,3.15,3.15t"
@@ -70,7 +70,12 @@ def scan(
 
 
 def report(
-    rows: list[dict], results: list[Result], targets: list[Target], source: str, last_update: str | None
+    rows: list[dict],
+    results: list[Result],
+    targets: list[Target],
+    source: str,
+    last_update: str | None,
+    pyodide_locks: Sequence[PyodideLock] = (),
 ) -> dict:
     """The tracker's data. `results` in each package lines up with the top-level `targets` list."""
     return {
@@ -78,6 +83,15 @@ def report(
         "generated": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "wheelgap": __version__,
         "top_packages": {"source": source, "last_update": last_update},
+        # The Pyodide releases whose own builds count as `bundled`; a pyodide target for another Python used none.
+        "pyodide_locks": [
+            {
+                "python": f"{lock.python[0]}.{lock.python[1]}",
+                "pyodide_version": lock.pyodide_version,
+                "source": lock.source,
+            }
+            for lock in pyodide_locks
+        ],
         "targets": [
             {
                 "label": t.label(True),
@@ -154,9 +168,20 @@ def main(argv: list[str] | None = None) -> int:
         check_locks(pyodide_locks, targets)
     except (OSError, ValueError) as error:  # PyodideLockError and UnicodeDecodeError are ValueErrors
         p.error(f"argument --pyodide-lock: {error}")
+    uncovered = [
+        t.python
+        for t in targets
+        if PLATFORMS[t.platform][0] == "pyodide" and not any(lock.applies_to(t) for lock in pyodide_locks)
+    ]
+    if pyodide_locks and uncovered:
+        print(
+            f"note: no --pyodide-lock for Python {', '.join(uncovered)}; "
+            "pyodide results there don't include packages that Pyodide bundles",
+            file=sys.stderr,
+        )
     rows, last_update = load_top(args.top_packages, args.top)
     results = scan(rows, targets, args.workers, pyodide_locks)
-    data = report(rows, results, targets, args.top_packages, last_update)
+    data = report(rows, results, targets, args.top_packages, last_update, pyodide_locks)
 
     errors = data["lookup_errors"]
     took = time.monotonic() - started

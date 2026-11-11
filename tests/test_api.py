@@ -120,6 +120,57 @@ def test_check_lockfile_counts_what_pyodide_bundles(fake_pypi, fixtures, tmp_pat
 
 
 @pytest.mark.parametrize(
+    ("version", "differs"),
+    [("3.0.2", False), ("3.0.2.0", False), ("2.1.5", True), (None, False)],
+)
+def test_result_reports_the_version_pyodide_bundles(fixtures, version, differs):
+    lock = load_pyodide_lock(str(fixtures / "pyodide-lock.json"))  # markupsafe 3.0.2
+    linux, pyodide = wheelgap.make_targets(python="3.13", platforms=["linux-x86_64", "pyodide"])
+    files = [f"markupsafe-{version or '2.1.5'}.tar.gz"]
+    result = wheelgap.check_package("MarkupSafe", version, [linux, pyodide], files=files, pyodide_locks=[lock])
+    assert result.statuses[pyodide] is Status.BUNDLED and result.gaps == [linux]  # a different version still passes
+    assert result.bundled_version == "3.0.2" and result.bundled_version_differs is differs
+    assert result.to_dict()["bundled"] == "3.0.2" and result.to_dict()["bundled_version_differs"] is differs
+
+
+def test_result_without_a_bundled_target_has_no_bundled_version(fake_pypi, fixtures):
+    lock = load_pyodide_lock(str(fixtures / "pyodide-lock.json"))
+    linux, pyodide = wheelgap.make_targets(python="3.13", platforms=["linux-x86_64", "pyodide"])
+    by_name = {
+        r.name: r for r in wheelgap.check_packages(["fastlib", "nowheels"], [linux, pyodide], pyodide_locks=[lock])
+    }
+    assert by_name["fastlib"].bundled_version == "2.0.0" and not by_name["fastlib"].bundled_version_differs
+    assert by_name["nowheels"].bundled_version is None
+    assert (
+        "bundled" not in by_name["nowheels"].to_dict()
+        and "bundled_version_differs" not in by_name["nowheels"].to_dict()
+    )
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        lambda **kw: wheelgap.check_packages(["fastlib"], **kw)[0],
+        lambda **kw: wheelgap.check_package("fastlib", **kw),
+        lambda **kw: wheelgap.check_package("fastlib", "2.0.0", files=["fastlib-2.0.0.tar.gz"], **kw),
+    ],
+)
+def test_pyodide_locks_can_be_a_generator(fake_pypi, fixtures, check):
+    lock = load_pyodide_lock(str(fixtures / "pyodide-lock.json"))
+    (pyodide,) = wheelgap.make_targets(python="3.13", platforms="pyodide")
+    result = check(targets=[pyodide], pyodide_locks=(x for x in [lock]))
+    assert result.statuses == {pyodide: Status.BUNDLED}
+
+
+def test_check_lockfile_pyodide_locks_can_be_a_generator(fake_pypi, fixtures, tmp_path):
+    lock = load_pyodide_lock(str(fixtures / "pyodide-lock.json"))
+    (tmp_path / "requirements.txt").write_text("fastlib==2.0.0\n")
+    (pyodide,) = wheelgap.make_targets(python="3.13", platforms="pyodide")
+    (result,) = wheelgap.check_lockfile(tmp_path / "requirements.txt", [pyodide], pyodide_locks=(x for x in [lock]))
+    assert result.statuses == {pyodide: Status.BUNDLED}
+
+
+@pytest.mark.parametrize(
     "check",
     [
         lambda **kw: wheelgap.check_packages(["fastlib"], **kw),
