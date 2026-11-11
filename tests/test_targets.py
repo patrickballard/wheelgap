@@ -344,7 +344,11 @@ def test_extra_linux_arches(arch):
     assert not accepts(glibc, f"x-1-cp313-cp313-musllinux_1_2_{arch}.whl")
     assert accepts(musl, f"x-1-cp313-cp313-musllinux_1_2_{arch}.whl")
     assert not accepts(musl, "x-1-cp313-cp313-musllinux_1_2_aarch64.whl")
-    assert glibc.marker_env["platform_machine"] == arch
+    if arch == "i686":  # depends on the host, not the image: see test_platform_machine_is_unknown_on_32bit_x86
+        assert glibc.unknown_markers == musl.unknown_markers == {"platform_machine"}
+    else:
+        assert glibc.marker_env["platform_machine"] == arch
+        assert not glibc.unknown_markers
     assert glibc.marker_env["sys_platform"] == "linux"
 
 
@@ -369,7 +373,15 @@ def test_legacy_manylinux2014_only_where_it_exists():
         ("linux-386", "linux-i686"),
         ("linux-x86", "linux-i686"),
         ("alpine-x86", "musl-i686"),
+        ("linux/i386", "linux-i686"),
+        ("linux-i386", "linux-i686"),
+        ("manylinux-i686", "linux-i686"),
+        ("musl-x86", "musl-i686"),
+        ("musl-386", "musl-i686"),
+        ("alpine-i686", "musl-i686"),
+        ("musllinux-i686", "musl-i686"),
         ("windows-x86", "win32"),
+        ("win-x86", "win32"),
         ("win32", "win32"),
     ],
 )
@@ -392,7 +404,7 @@ def test_win32_target():
     assert not accepts(t("win-amd64"), "numpy-2.1.3-cp313-cp313-win32.whl")
     assert not accepts(win32, "numpy-2.1.3-cp313-cp313-win_amd64.whl")
     assert not accepts(win32, "numpy-2.1.3-cp313-cp313-manylinux_2_17_i686.whl")
-    assert win32.marker_env["platform_machine"] == "x86"
+    assert win32.unknown_markers == {"platform_machine"}
     assert win32.marker_env["sys_platform"] == "win32"
 
 

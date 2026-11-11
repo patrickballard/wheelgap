@@ -32,6 +32,7 @@ ARCHES = {
     "linux/s390x": "s390x",
     "linux/riscv64": "riscv64",
     "linux/386": "i686",
+    "linux/i386": "i686",  # containerd normalises it to linux/386
 }
 WINDOWS_VARIANTS = ("windowsservercore", "nanoserver")
 IMAGE_NAMES = ("python", "library/python", "docker.io/library/python", "docker.io/python")

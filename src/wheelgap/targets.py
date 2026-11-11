@@ -128,6 +128,7 @@ ALIASES: dict[str, str] = {
     "win-x86": "win32",
     "linux-x86": "linux-i686",
     "linux-386": "linux-i686",
+    "linux-i386": "linux-i686",
     "manylinux-i686": "linux-i686",
     "musl-x86": "musl-i686",
     "musl-386": "musl-i686",
@@ -168,6 +169,10 @@ _MARKER_MACHINE = {
     "x86_64_iphonesimulator": "x86_64",
     "arm64_v8a": "aarch64",
 }
+# On 32-bit x86, platform_machine is the machine's, not the Python's: 32-bit Python reports "AMD64" on 64-bit
+# Windows (WOW64) and "ARM64" on Windows on ARM, and only real 32-bit Windows says "x86"; a linux/386 container on
+# an x86_64 host says "x86_64" unless it runs under linux32. So a comparison on it is unknown for these targets.
+_UNKNOWN_MACHINE_ARCHES = {"win32", "i686"}
 
 DEFAULT_PLATFORMS = ["linux-x86_64", "linux-aarch64", "macos-arm64", "win-amd64"]
 DEFAULT_GLIBC = "2.36"
@@ -375,6 +380,13 @@ class Target:
         if family == "android":
             return list(tags.android_platforms(self.android_api, arch))
         return [arch]
+
+    @property
+    def unknown_markers(self) -> frozenset[str]:
+        """Marker names whose value this target doesn't decide (on top of check.py's _UNKNOWABLE)."""
+        return (
+            frozenset({"platform_machine"}) if PLATFORMS[self.platform][1] in _UNKNOWN_MACHINE_ARCHES else frozenset()
+        )
 
     @cached_property
     def marker_env(self) -> dict[str, str]:

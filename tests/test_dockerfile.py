@@ -56,9 +56,12 @@ from wheelgap.dockerfile import (
         ("--platform=linux/386 python:3.13-bookworm", ImageTarget("3.13", "linux-i686", glibc="2.36")),
         ("--platform=linux/386 python:3.11-slim-bullseye", ImageTarget("3.11", "linux-i686", glibc="2.31")),
         ("--platform=linux/386 python:3.13-alpine", ImageTarget("3.13", "musl-i686", musl="1.2")),
+        ("--platform=linux/i386 python:3.13-bookworm", ImageTarget("3.13", "linux-i686", glibc="2.36")),
         # Tags Docker Hub stopped rebuilding before it dropped s390x and ppc64le for bookworm and bullseye
         ("--platform=linux/s390x python:3.9-bookworm", ImageTarget("3.9", "linux-s390x", glibc="2.36")),
         ("--platform=linux/s390x python:3.12.7-bookworm", ImageTarget("3.12", "linux-s390x", glibc="2.36")),
+        ("--platform=linux/386 python:3.9-bookworm", ImageTarget("3.9", "linux-i686", glibc="2.36")),
+        ("--platform=linux/386 python:3.12.7-bookworm", ImageTarget("3.12", "linux-i686", glibc="2.36")),
         ("--platform=linux/ppc64le python:3.11.0-slim-bullseye", ImageTarget("3.11", "linux-ppc64le", glibc="2.31")),
         ("--platform=linux/s390x python:3.6", ImageTarget("3.6", "linux-s390x", glibc="2.31")),
         (
