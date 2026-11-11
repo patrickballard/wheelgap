@@ -126,7 +126,9 @@ TOOLS: list[dict[str, Any]] = [
             "requirements.txt, or a project directory containing one), exactly as the wheelgap command line does, and "
             "report the packages without a wheel on some target. Environment markers, .python-version and the "
             "project's [tool.wheelgap] settings (targets, python, glibc, ignore, offline, index-url, ...) apply; "
-            "arguments given here override them. Packages from git, paths, URLs or private indexes are listed under "
+            "arguments given here override them, except that offline = true in the project can't be turned off. "
+            "Notes and errors name command-line flags (--offline is the offline argument here). "
+            "Packages from git, paths, URLs or private indexes are listed under "
             "'skipped': they were NOT checked. 'notes' says when an answer may be incomplete. Requirements files are "
             "looked up on the index. " + _STATUS_HELP
         ),
@@ -275,6 +277,7 @@ def _check_lockfile(args: dict[str, Any]) -> dict[str, Any]:
         code = e.code if isinstance(e.code, int) else 2
     messages = [line.removeprefix("wheelgap: ") for line in err.getvalue().splitlines() if line.strip()]
     notes = [m.removeprefix("note: ") for m in messages if m.startswith("note: ")]
+    # SystemExit is a BaseException: without the handler above it would end the server, not just this call.
     if code not in (0, 1):
         errors = [m.removeprefix("error: ") for m in messages if not m.startswith("note: ")]
         raise ToolError("; ".join(errors) or f"wheelgap exited with status {code}")
@@ -293,6 +296,9 @@ def _check_lockfile(args: dict[str, Any]) -> dict[str, Any]:
         if cells:
             results = {label[cell]: status for cell, status in package["results"].items()}
             gaps.append(package | {"results": results, "gaps": cells})
+    if data["skipped"]:
+        n = len(data["skipped"])
+        notes.append(f"{n} package{'s' if n != 1 else ''} weren't checked (see skipped); ok covers the others only")
     return {
         "path": str(path.resolve()),
         "targets": list(label.values()),

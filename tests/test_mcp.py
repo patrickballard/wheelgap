@@ -217,13 +217,56 @@ def test_check_lockfile_ignores_from_config(fake_pypi, tmp_path, fixtures):
     assert [(g["name"], g["gaps"]) for g in data["gaps"]] == [("nativeext", ["3.13 win-amd64"])]
 
 
+def test_check_lockfile_glibc_argument(fake_pypi, fixtures):
+    path = str(fixtures / "uvproj")
+    (_, default, old) = run(
+        init(),
+        call("check_lockfile", path=path, python="3.13", targets=["linux-x86_64"], offline=True),
+        call("check_lockfile", 2, path=path, python="3.13", targets=["linux-x86_64"], offline=True, glibc="2.12"),
+    )
+    assert "fastlib" not in {g["name"] for g in default["result"]["structuredContent"]["gaps"]}
+    # fastlib's only wheel is manylinux_2_17, too new for glibc 2.12.
+    assert "fastlib" in {g["name"] for g in old["result"]["structuredContent"]["gaps"]}
+
+
+def test_check_lockfile_counts_unknown(fake_pypi, tmp_path):
+    (tmp_path / "requirements.txt").write_text("purewheel==3.1\nno-such-package==1.0\n", encoding="utf-8")
+    (_, reply) = run(init(), call("check_lockfile", path=str(tmp_path / "requirements.txt"), python="3.13"))
+    data = reply["result"]["structuredContent"]
+    assert data["unknown"] == 1 and data["ok"] is False
+
+
+def test_check_lockfile_path_starting_with_a_dash(fake_pypi, tmp_path, monkeypatch, fixtures):
+    (tmp_path / "-p").mkdir()
+    (tmp_path / "-p" / "uv.lock").write_bytes((fixtures / "uvproj" / "uv.lock").read_bytes())
+    monkeypatch.chdir(tmp_path)
+    (_, reply) = run(init(), call("check_lockfile", path="-p", python="3.13", offline=True))
+    assert reply["result"]["isError"] is False
+    assert reply["result"]["structuredContent"]["path"].endswith("-p")
+
+
+def test_check_lockfile_argparse_exit_is_a_tool_error(monkeypatch, fixtures):
+    from wheelgap import cli
+
+    def exits(argv):
+        raise SystemExit(2)
+
+    monkeypatch.setattr(cli, "main", exits)
+    (_, reply, ping) = run(
+        init(), call("check_lockfile", path=str(fixtures / "uvproj")), {"jsonrpc": "2.0", "id": 9, "method": "ping"}
+    )
+    assert reply["result"]["isError"] is True
+    assert ping["result"] == {}
+
+
 def test_check_lockfile_passes_on_notes(fake_pypi, fixtures):
     (_, reply) = run(
         init(),
         call("check_lockfile", path=str(fixtures / "uvproj"), python="3.11", targets=["linux-x86_64"], offline=True),
     )
-    (note,) = reply["result"]["structuredContent"]["notes"]
-    assert "may show false gaps" in note
+    notes = reply["result"]["structuredContent"]["notes"]
+    assert "may show false gaps" in notes[0]
+    assert notes[1] == "2 packages weren't checked (see skipped); ok covers the others only"
     assert not fake_pypi
 
 
