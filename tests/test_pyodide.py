@@ -50,13 +50,36 @@ def test_quiet_omits_pyodide_bundled_details(capsys, fake_pypi, lock):
     assert out == "1 of 2 packages has gaps: 1 can't install at all.\ngaps: nowheels\n"
 
 
-def test_different_bundled_version_is_flagged(capsys, fake_pypi, tmp_path):
+@pytest.fixture
+def lock_with_other_version(tmp_path):
     path = tmp_path / "pyodide-lock.json"
     info = {"abi_version": "2025_0", "python": "3.13.2", "version": "0.29.0"}
     path.write_text(json.dumps({"info": info, "packages": {"nowheels": {"name": "nowheels", "version": "0.8"}}}))
-    code, out, _ = run(capsys, "nowheels==0.9", "-p", "3.13", "-t", "pyodide", "--pyodide-lock", str(path))
+    return str(path)
+
+
+def test_different_bundled_version_is_flagged(capsys, fake_pypi, lock_with_other_version):
+    code, out, _ = run(
+        capsys, "nowheels==0.9", "-p", "3.13", "-t", "pyodide", "--pyodide-lock", lock_with_other_version
+    )
     assert code == 0
     assert "nowheels 0.8 (you pinned 0.9)" in out
+
+
+# #75: a mismatch still passes, but is never hidden.
+def test_different_bundled_version_is_shown_even_when_quiet(capsys, fake_pypi, lock_with_other_version):
+    argv = ("nowheels==0.9", "-p", "3.13", "-t", "pyodide", "--pyodide-lock", lock_with_other_version, "--quiet")
+    code, out, err = run(capsys, *argv)
+    assert code == 0 and not err
+    assert out == "1 package comes from Pyodide 0.29.0's own builds: nowheels 0.8 (you pinned 0.9)\n"
+
+
+def test_different_bundled_version_in_json(capsys, fake_pypi, lock_with_other_version):
+    argv = ("nowheels==0.9", "-p", "3.13", "-t", "pyodide", "--pyodide-lock", lock_with_other_version, "--json")
+    code, out, _ = run(capsys, *argv)
+    (package,) = json.loads(out)["packages"]
+    assert package["bundled"] == "0.8" and package["bundled_version_differs"] is True
+    assert code == 0
 
 
 def test_json_and_other_targets(capsys, fake_pypi, lock):
@@ -67,6 +90,7 @@ def test_json_and_other_targets(capsys, fake_pypi, lock):
     # Only the pyodide target changes; fastlib still builds from source on Alpine ARM.
     assert fastlib["results"] == {"pyodide": "bundled", "musl-aarch64": "source"}
     assert fastlib["bundled"] == "2.0.0"
+    assert fastlib["bundled_version_differs"] is False
     assert code == 1
 
 
