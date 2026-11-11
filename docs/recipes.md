@@ -106,3 +106,144 @@ the intended Python and targets there, or add `-p` and `-t` to the command.
 The loop stops at the first failing check and exits with its code, so later
 lockfiles aren't checked and a later successful check can't hide an earlier gap
 or input error.
+
+## Using wheelgap from an agent or script
+
+A coding agent or a script should read wheelgap's exit code and its `--json`
+output, not the table. Nothing needs installing:
+
+```bash
+uvx wheelgap uv.lock -p 3.13 -t linux-x86_64,linux-aarch64 --json > wheelgap.json
+```
+
+- `uvx wheelgap` runs the latest release from PyPI (`pipx run wheelgap` works
+  too). Pin one, such as `uvx wheelgap@0.8.0`, when the result must not change
+  between runs, and check `uvx wheelgap --help` for the flags that release has.
+- Always pass `-p` and `-t`. Without them, the Python comes from a
+  `.python-version` file or the interpreter wheelgap runs on, and the targets
+  from `[tool.wheelgap]` or the built-in defaults, so the same command can check
+  different things on different machines. `uvx wheelgap --list-targets` lists
+  the target names.
+- Lockfiles (`uv.lock`, `pylock.toml`, `poetry.lock`, `pdm.lock`) are read
+  without network access, as long as their `requires-python` includes the Python
+  you check. Requirements files, `Pipfile.lock` and package names are looked up
+  on PyPI.
+
+**Exit codes:** `0` no gaps, `1` gaps found, `2` bad input. With `--json`, a bad
+input (a missing lockfile, an unknown target, a bad `[tool.wheelgap]` value)
+prints `{"error": {"message": "...", "type": "..."}}` on stdout as well as the
+`wheelgap: error:` line on stderr. A command-line usage error, such as an
+unknown flag, is plain text on stderr only. `--exit-zero` always exits `0`, for
+informational runs; add `set -o pipefail` when you pipe the output, so input
+errors still fail.
+
+**Reading `--json`:** notes go to stderr, so stdout holds only the JSON.
+`packages` has one entry per package with its `name`, `version`, `error` and
+`results`. `results` is keyed by target label: just the platform
+(`"linux-aarch64"`) when one Python is checked, or Python and platform
+(`"3.13 linux-aarch64"`) with several. Rather than building the key, look it up
+in the top-level `targets` list, which gives each target's `label`, `python` and
+`platform` (the [README](https://github.com/wheelgap/wheelgap#usage) has a
+Python example). Each result is one of:
+
+| value | meaning |
+| --- | --- |
+| `wheel` | a compatible wheel exists |
+| `source` | only an sdist, so pip or uv compiles it at install time |
+| `missing` | no wheel and no sdist, so the install fails |
+| `unknown` | couldn't be looked up; the package's `error` says why |
+| `n/a` | not installed on this target (environment markers exclude it) |
+| `bundled` | Pyodide ships its own build (with `--pyodide-lock`) |
+
+`skipped` lists packages that weren't checked (such as editable, path or Git
+dependencies), `ignored` the names matched by `--ignore`, and `summary` the
+counts. Keys are only ever added, never renamed or removed.
+
+**Why is it a gap?** `--explain` lists each rejected wheel and the reason. With
+`--json --explain`, each package also gets `rejected` and, for `uv.lock`, `via`
+(the dependency path that installs it), both keyed by target label like
+`results`.
+
+**Accepted gaps:** `--fail-on missing` (or `fail-on = "missing"` in
+`[tool.wheelgap]`) allows source builds and only exits `1` when a package can't
+be installed at all. `--ignore psycopg2` (repeatable or comma-separated) takes a
+package out of the table, the counts and the exit code, and lists it as ignored.
+`ignore = ["psycopg2"]` in `[tool.wheelgap]` makes that the default; `--ignore`
+flags replace the configured list rather than adding to it.
+
+### Worked example
+
+Run from a clone of this repository, on its `tests/fixtures/uvproj` test
+project, which needs no network access. This output is from wheelgap 0.8.0.
+
+```bash
+uvx wheelgap tests/fixtures/uvproj/uv.lock -p 3.13 -t linux-x86_64,linux-aarch64 --json > wheelgap.json
+echo $?
+```
+
+```text
+1
+```
+
+List every gap with its target label:
+
+```bash
+jq -r '.packages[] | .name as $name | .results | to_entries[]
+  | select(.value == "source" or .value == "missing" or .value == "unknown")
+  | "\($name) \(.key) \(.value)"' wheelgap.json
+```
+
+```text
+fastlib linux-aarch64 source
+nativeext linux-x86_64 source
+nativeext linux-aarch64 source
+puresdist linux-x86_64 source
+puresdist linux-aarch64 source
+```
+
+Ask why `fastlib` has no ARM wheel (this exits `1` too):
+
+```bash
+uvx wheelgap tests/fixtures/uvproj/uv.lock -p 3.13 -t linux-aarch64 --explain
+```
+
+```text
+wheelgap 0.8.0 · uv.lock · 5 packages · Python 3.13
+
+package    version  linux-aarch64
+fastlib    2.0.0    ● source
+nativeext  0.3      ● source
+puresdist  1.0      ● source
+
+2 packages with wheels for every target hidden (--all to show)
+
+fastlib 2.0.0 on linux-aarch64: ● source
+  via: demo → fastlib
+  fastlib-2.0.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl  manylinux_2_17_x86_64 doesn't match linux-aarch64
+  fastlib-2.0.0-cp313-cp313-macosx_11_0_arm64.whl                           macosx_11_0_arm64 doesn't match linux-aarch64
+  fastlib-2.0.0-cp313-cp313-win_amd64.whl                                   win_amd64 doesn't match linux-aarch64
+
+nativeext 0.3 on linux-aarch64: ● source
+  via: demo → fastlib → nativeext
+  no wheels published for this version
+
+puresdist 1.0 on linux-aarch64: ● source
+  via: demo → puresdist
+  no wheels published for this version
+
+skipped 2 non-index packages: demo (editable), gitdep (git)
+3 of 5 packages have gaps: 3 will build from source.
+```
+
+Source builds are acceptable here, so check that nothing fails to install:
+
+```bash
+uvx wheelgap tests/fixtures/uvproj/uv.lock -p 3.13 -t linux-x86_64,linux-aarch64 --fail-on missing -q
+echo $?
+```
+
+```text
+3 of 5 packages have gaps: 3 will build from source.
+gaps: fastlib, nativeext, puresdist
+0
+```
