@@ -2,6 +2,7 @@ import io
 import json
 import threading
 from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import pytest
 
@@ -803,19 +804,22 @@ def test_diff_lockfiles_identical_files_are_ok(fake_pypi, tmp_path):
     assert data["worse"] == [] and data["new"] == [] and data["summary"] == {"worse": 0, "new": 0}
 
 
-def test_diff_lockfiles_looks_packages_up_unless_offline(fake_pypi, tmp_path):
-    # Requirements files record no files, so every package needs the index: offline is an error, not a pass.
+def test_diff_lockfiles_looks_requirements_up(fake_pypi, tmp_path):
+    # Requirements files record no files, so every package is looked up on the index.
     (tmp_path / "old.txt").write_text("ranged==1.5\n", encoding="utf-8")
     (tmp_path / "new.txt").write_text("ranged==1.9\n", encoding="utf-8")
     arguments = {"old": str(tmp_path / "old.txt"), "new": str(tmp_path / "new.txt"), "python": "3.13"}
     (_, reply) = run(init(), call("diff_lockfiles", **arguments, targets=["linux-x86_64"]))
     assert [w["name"] for w in reply["result"]["structuredContent"]["worse"]] == ["ranged"]
     assert fake_pypi
-    fake_pypi.clear()
-    (_, reply) = run(init(), call("diff_lockfiles", **arguments, targets=["linux-x86_64"], offline=True))
-    assert reply["result"]["isError"] is True
-    assert "needs the index" in reply["result"]["content"][0]["text"]
-    assert not fake_pypi
+
+
+def test_diff_lockfiles_malformed_lockfile_is_a_tool_error(fake_pypi, tmp_path):
+    old, new = lockfile_pair(tmp_path, uv_package("purewheel", "3.1"), uv_package("purewheel", "3.1"))
+    Path(new).write_text("[[package\n", encoding="utf-8")
+    (_, reply) = run(init(), call("diff_lockfiles", old=old, new=new, python="3.13", targets=["linux-x86_64"]))
+    text = reply["result"]["content"][0]["text"]
+    assert reply["result"]["isError"] is True and "internal error" not in text
 
 
 @pytest.mark.parametrize(
@@ -824,7 +828,8 @@ def test_diff_lockfiles_looks_packages_up_unless_offline(fake_pypi, tmp_path):
         ({"old": "/no/such/uv.lock"}, "no such file or directory"),
         ({"new": "/no/such/uv.lock"}, "no such file or directory"),
         ({"old": None}, "'old' is required"),
-        ({"offline": "yes"}, "'offline' must be true or false"),
+        ({"offline": True}, "unknown argument(s): offline"),  # wheelgap diff has no offline mode
+        ({"old": "{tmp}/old.lock"}, "don't know how to read"),  # the saved copy needs its real name
         ({"targets": ["linux-aarch46"]}, "linux-aarch46"),
         ({"python": "three"}, "can't read Python version"),
         ({"glibc": "2.28"}, "unknown argument(s): glibc"),
@@ -835,6 +840,7 @@ def test_diff_lockfiles_looks_packages_up_unless_offline(fake_pypi, tmp_path):
 def test_diff_lockfiles_errors(fake_pypi, tmp_path, arguments, message):
     old, new = lockfile_pair(tmp_path, uv_package("purewheel", "3.1"), uv_package("purewheel", "3.1"))
     (tmp_path / "notes.md").write_text("hi\n", encoding="utf-8")
+    (tmp_path / "old.lock").write_text(Path(old).read_text(encoding="utf-8"), encoding="utf-8")
     (tmp_path / "empty").mkdir()
     merged = {"old": old, "new": new} | {
         k: v.format(tmp=tmp_path) if isinstance(v, str) else v for k, v in arguments.items()

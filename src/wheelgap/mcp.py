@@ -69,8 +69,9 @@ INSTRUCTIONS = (
     "build it from source (or can't install it at all). Use check_lockfile on a project's uv.lock, poetry.lock, "
     "pdm.lock, pylock.toml, Pipfile.lock or requirements.txt before changing the platforms it deploys to, "
     "check_dockerfile before changing a Dockerfile's FROM line (it reads the image's Python, platform and libc for "
-    "you), check_package before adding a dependency, and diff_lockfiles after upgrading dependencies (save the old "
-    "lockfile first) to see whether the upgrade lost a wheel anywhere. Pass the project's Python version: results "
+    "you), check_package before adding a dependency, and diff_lockfiles to see whether a dependency upgrade lost a "
+    "wheel anywhere (save the old lockfile under its own name first, e.g. `mkdir -p /tmp/old && git show "
+    "HEAD:uv.lock > /tmp/old/uv.lock`). Pass the project's Python version: results "
     "differ between versions. Linux results assume a glibc (manylinux) or musl version: pass the one your image or "
     "distro has."
 )
@@ -227,10 +228,11 @@ TOOLS: list[dict[str, Any]] = [
             "Compare a lockfile before and after a change (a dependency upgrade, a re-lock), exactly as `wheelgap diff "
             "OLD NEW --json` does, and report what got worse: 'worse' lists packages whose status dropped on a target "
             "(e.g. wheel → source after a version bump), 'new' lists added packages with a gap, and 'ok' is true only "
-            "when both are empty. A package that can no longer be checked (unknown, or now from git, a path, a URL or "
-            "a private index) counts as worse; 'unchecked' names packages unknown on both sides at the same version. "
-            "Save the old lockfile before you upgrade, e.g. `git show HEAD:uv.lock > /tmp/old.lock`, and pass that as "
-            "'old'. As with `wheelgap diff`, the project's [tool.wheelgap] settings don't apply: pass python and "
+            "when both are empty. A package that can no longer be checked (unknown, or now from git, a path, a URL or a"
+            " private index) counts as worse; 'unchecked' names packages unknown on both sides at the same version. "
+            "Pass the old lockfile as 'old' under its own file name, since the name says how to read it: e.g. `mkdir -p"
+            " /tmp/old && git show HEAD:uv.lock > /tmp/old/uv.lock` (this works after the upgrade too, until it's "
+            "committed). As with `wheelgap diff`, the project's [tool.wheelgap] settings don't apply: pass python and "
             "targets. " + _STATUS_HELP
         ),
         "inputSchema": {
@@ -246,10 +248,6 @@ TOOLS: list[dict[str, Any]] = [
                 },
                 "python": _PYTHON_PROP | {"description": _PYTHON_PROP["description"] + " Default: the server's."},
                 "targets": _TARGETS_PROP,
-                "offline": {
-                    "type": "boolean",
-                    "description": "Use only the files recorded in the lockfiles; never contact the index.",
-                },
             },
             "required": ["old", "new"],
             "additionalProperties": False,
@@ -418,9 +416,6 @@ def _diff_lockfiles(args: dict[str, Any]) -> dict[str, Any]:
 
     _check_keys("diff_lockfiles", args)
     paths = [_existing(_string(args, key, required=True) or "") for key in ("old", "new")]
-    offline = args.get("offline")
-    if offline is not None and not isinstance(offline, bool):
-        raise ToolError("'offline' must be true or false")
     try:
         targets = make_targets(_pythons(args) or None, _platforms(args) or None)
     except TargetError as e:
@@ -428,9 +423,15 @@ def _diff_lockfiles(args: dict[str, Any]) -> dict[str, Any]:
     sides = []
     for path in paths:
         try:
-            results, source = check_with_source(path, targets, online=False, offline=bool(offline))
+            # As in `wheelgap diff`: no offline mode, so a lock made for other Pythons is re-checked on the index
+            # rather than compared on files it may be missing (which could cancel out and pass on a guess).
+            results, source = check_with_source(path, targets, online=False, offline=False)
         except OSError as e:  # a lockfile that can't be read
             raise ToolError(f"{path}: {e.strerror or e}") from e
+        except SourceError:
+            raise
+        except ValueError as e:  # malformed TOML or JSON, not UTF-8: the file's problem, not a bug here
+            raise ToolError(f"{path}: {type(e).__name__}: {e}") from e
         packages = diff.merge(results, targets)
         diff.add_skipped(packages, source, targets)
         sides.append(packages)
