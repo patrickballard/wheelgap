@@ -304,6 +304,55 @@ def test_is_pypi(registry, expected):
     assert pypi.is_pypi(registry) is expected
 
 
+MIRROR = "https://mirror.example.com/simple"
+
+
+@pytest.mark.parametrize(
+    ("registry", "index", "simple_index", "expected"),
+    [
+        (None, None, None, True),
+        ("https://pypi.org/simple", "https://mirror.example.com/pypi", None, True),
+        (MIRROR, None, None, False),  # WHEELGAP_INDEX_URL unset: PyPI, as before
+        (MIRROR, "https://pypi.org/pypi", None, False),
+        (MIRROR, "https://mirror.example.com/pypi", None, True),
+        (MIRROR, "https://mirror.example.com/pypi/", None, True),
+        (MIRROR, "https://Mirror.Example.COM:443/pypi", None, True),  # hostnames ignore case; 443 is https's port
+        ("https://MIRROR.example.com:443/simple", "https://mirror.example.com/pypi", None, True),
+        ("https://user:tok@mirror.example.com/simple", "https://mirror.example.com/pypi", None, True),
+        ("https://${USER}:${PASS}@mirror.example.com/simple", "https://mirror.example.com/pypi", None, True),
+        (MIRROR, "https://mirror.example.com/pypi", "https://mirror.example.com/simple", False),  # --index-url
+        ("https://mirror.example.com:8443/simple", "https://mirror.example.com/pypi", None, False),
+        ("http://mirror.example.com/simple", "https://mirror.example.com/pypi", None, False),
+        ("https://mirror.example.com@evil.example/simple", "https://mirror.example.com/pypi", None, False),
+        ("https://mirror.example.com.evil.example/simple", "https://mirror.example.com/pypi", None, False),
+        ("https://pkgs.example.com/simple", "https://mirror.example.com/pypi", None, False),
+        ("https://mirror.example.com:99999/simple", "https://mirror.example.com/pypi", None, False),
+        ("https://[bad/simple", "https://mirror.example.com/pypi", None, False),
+        ("/simple", "https://mirror.example.com/pypi", None, False),
+    ],
+)
+def test_may_look_up(monkeypatch, registry, index, simple_index, expected):
+    if index is not None:
+        monkeypatch.setenv("WHEELGAP_INDEX_URL", index)
+    assert pypi.may_look_up(registry, simple_index) is expected
+
+
+def test_fill_all_looks_up_a_mirror_package_on_wheelgap_index_url(monkeypatch, fake_pypi):
+    monkeypatch.setenv("WHEELGAP_INDEX_URL", "https://mirror.example.com/pypi")
+    pkg = Package(name="purewheel", version="3.1", files=None, registry=MIRROR)
+    assert pypi.fill_all([pkg]) == 0
+    assert pkg.skip is None and pkg.files == ["purewheel-3.1-py3-none-any.whl"]
+    assert fake_pypi == ["https://mirror.example.com/pypi/purewheel/3.1/json"]
+
+
+def test_online_keeps_a_mirror_package_s_locked_files(monkeypatch, fake_pypi):
+    # A lock that lists its files (uv.lock, poetry.lock) keeps them under --online, mirror or not: as before.
+    monkeypatch.setenv("WHEELGAP_INDEX_URL", "https://mirror.example.com/pypi")
+    pkg = Package(name="purewheel", version="3.1", files=["purewheel-3.1.tar.gz"], registry=MIRROR)
+    assert pypi.fill_all([pkg], refresh=True) == 1
+    assert pkg.files == ["purewheel-3.1.tar.gz"] and fake_pypi == []
+
+
 @pytest.mark.parametrize(
     ("package", "expected"),
     [
