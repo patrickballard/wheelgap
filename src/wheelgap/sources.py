@@ -673,6 +673,8 @@ def parse_pyproject(path: Path) -> Source:
             )
         extras[key] = list(lines)
     source = Source(path.name, pyproject_extras=extras, pyproject_dynamic_extras="optional-dependencies" in dynamic)
+    if isinstance(requires_python := project.get("requires-python"), str):
+        source.requires_python = requires_python
     if isinstance(name := project.get("name"), str):
         source.pyproject_name = canonicalize_name(name)
     self_extras: list[str] = []

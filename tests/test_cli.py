@@ -2172,6 +2172,40 @@ def test_pyproject_checks_direct_dependencies(capsys, fake_pypi, tmp_path):
     assert "lists direct dependencies only" in err
 
 
+def _write_requires_python_pyproject(tmp_path, requires_python):
+    path = tmp_path / "pyproject.toml"
+    path.write_text(
+        f'[project]\nname = "mylib"\ndependencies = []\nrequires-python = "{requires_python}"\n',
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_pyproject_requires_python_note_names_unsupported_pythons(capsys, fake_pypi, tmp_path):
+    path = _write_requires_python_pyproject(tmp_path, ">=3.11")
+    code, out, err = run(capsys, str(path), "-p", "3.10", "-t", "linux-x86_64", "--json")
+    assert code == 0
+    assert "requires Python >=3.11" in err
+    assert "leaves out Python 3.10" in err
+    assert "is locked for Python" not in err  # the uv.lock wording doesn't apply
+    assert "requires Python" not in out  # notes stay out of --json
+
+
+def test_pyproject_requires_python_note_absent_when_supported(capsys, fake_pypi, tmp_path):
+    path = _write_requires_python_pyproject(tmp_path, ">=3.11")
+    code, _, err = run(capsys, str(path), "-p", "3.12", "-t", "linux-x86_64")
+    assert code == 0
+    assert "leaves out Python" not in err
+
+
+def test_pyproject_invalid_requires_python_is_ignored_with_a_note(capsys, fake_pypi, tmp_path):
+    path = _write_requires_python_pyproject(tmp_path, "3.11")
+    code, _, err = run(capsys, str(path), "-p", "3.12", "-t", "linux-x86_64")
+    assert code == 0
+    assert "ignoring requires-python '3.11'" in err
+    assert "is locked for Python" not in err
+
+
 @pytest.mark.parametrize("flags", [["--extra", "test"], ["--all-extras"]])
 def test_pyproject_extra_adds_optional_dependencies(capsys, fake_pypi, tmp_path, flags):
     path = tmp_path / "pyproject.toml"
