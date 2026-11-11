@@ -197,7 +197,8 @@ def compare(before: dict[str, Package], after: dict[str, Package], targets: list
 
 def json_report(report: Report, targets: list[Target]) -> str:
     """--json: one object. Its keys are a public interface, like the main command's --json. Versions are
-    lists: empty when unknown or for a package installed from git, a path or a URL; several for a uv.lock fork."""
+    lists: empty when the input gives no version (an unpinned or unknown package, or a requirements line
+    installing from git, a path or a URL); several for a uv.lock fork."""
     multi_py = len({t.python for t in targets}) > 1
     return json.dumps(
         {
