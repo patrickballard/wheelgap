@@ -347,7 +347,7 @@ def test_check_dockerfile_targets_override_the_image_platform(fake_pypi, tmp_pat
 @pytest.mark.parametrize(
     ("text", "arguments", "message"),
     [
-        ("FROM ubuntu:24.04\n", {}, "pass -p/-t instead (here: use check_lockfile with python and targets)"),
+        ("FROM ubuntu:24.04\n", {}, "supported, use check_lockfile with python and targets instead"),
         ("RUN echo hi\n", {}, "no FROM line found"),
         ("FROM python:3.13\n", {"path": "/no/such/uv.lock"}, "no such file or directory"),
         ("FROM python:3.13\n", {"dockerfile": "/no/such/Dockerfile"}, "no such file or directory"),
