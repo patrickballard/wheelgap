@@ -1267,7 +1267,8 @@ def test_ignore_on_one_target_text(capsys, fixtures, target):
     assert "ignored: armlib (musl-aarch64), newglibc" in out
     assert "● source (ignored)" in out  # the cell is still shown, marked as accepted
     assert "armlib 1.4.0 on" not in out  # and not explained as a gap
-    assert "The 1 package has a wheel for every one of 2 targets." in out
+    # A clean run that only passes because of the ignore doesn't claim a wheel everywhere.
+    assert "✓ The 1 package has a wheel for every one of 2 targets, apart from 1 ignored gap." in out
 
 
 def test_ignore_on_one_target_keeps_other_targets(capsys, fixtures):
@@ -1308,8 +1309,42 @@ def test_ignore_on_one_target_markdown(capsys, fixtures):
     assert code == 0 and not err
     assert "Ignored: `armlib` (musl-aarch64), `newglibc`" in out
     assert "| armlib | 1.4.0 | ✓ | ● source (ignored) |" in out
-    assert "every package has a wheel" in out
+    assert out.startswith("### wheelgap: every package has a wheel for all 2 targets, apart from 1 ignored gap\n")
     assert "Why (rejected wheels)" not in out
+
+
+@pytest.mark.parametrize("output", ["--markdown", "--color=never"])
+def test_ignore_on_one_target_hidden_and_clean_lines(capsys, fixtures, output):
+    # newglibc's gaps (missing on both targets) are ignored where it's checked; armlib's musl gap still counts.
+    args = (str(fixtures / "armgap"), *ARMGAP_TWO, output, "--ignore", "newglibc:linux-aarch64,newglibc:musl-aarch64")
+    code, out, err = run(capsys, *args)
+    assert code == 1 and not err
+    assert "1 package with only ignored gaps hidden" in out
+    assert "with wheels for every target" not in out
+    # Both gaps ignored and no --all: nothing is hidden as wheel-only, and the clean line says what was ignored.
+    code, out, err = run(capsys, *args[:-1], "newglibc:all,armlib:musl-aarch64")
+    assert code == 0 and not err
+    if output == "--markdown":
+        assert "### wheelgap: every package has a wheel for all 2 targets, apart from 3 ignored gaps\n" in out
+    else:
+        assert "✓ All 2 packages have a wheel for every one of 2 targets, apart from 3 ignored gaps." in out
+
+
+def test_hidden_line_counts_wheels_and_ignored_gaps_apart():
+    from wheelgap.check import Row
+    from wheelgap.sources import Package
+    from wheelgap.targets import build_targets
+
+    lin, musl = build_targets(["3.13"], ["linux-aarch64", "musl-aarch64"])
+    clean = Row(Package("a", "1"), {lin: Status.WHEEL, musl: Status.WHEEL})
+    accepted = Row(Package("b", "1"), {lin: Status.WHEEL, musl: Status.SOURCE}, ignored=frozenset({musl}))
+    wheel_on_ignored = Row(Package("c", "1"), {lin: Status.WHEEL, musl: Status.WHEEL}, ignored=frozenset({musl}))
+    assert cli.hidden_line([clean]) == "1 package with wheels for every target hidden"
+    assert cli.hidden_line([clean, wheel_on_ignored]) == "2 packages with wheels for every target hidden"
+    assert cli.hidden_line([accepted, accepted]) == "2 packages with only ignored gaps hidden"
+    assert cli.hidden_line([clean, clean, accepted]) == (
+        "2 packages with wheels for every target and 1 with only ignored gaps hidden"
+    )
 
 
 def test_ignore_on_one_target_quiet(capsys, fixtures):

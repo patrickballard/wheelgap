@@ -372,12 +372,36 @@ CELL = {
 }
 
 
+def ignored_gaps(row: Row) -> list[Target]:
+    """Targets where this package has a gap that `--ignore NAME:TARGET` accepts."""
+    return [t for t in row.ignored if row.results[t] in (Status.SOURCE, Status.MISSING, Status.UNKNOWN)]
+
+
 def cell(row: Row, target: Target) -> tuple[str, str]:
     """A table cell's text and color; a gap on a target `--ignore NAME:TARGET` ignores says so."""
     text, color = CELL[row.results[target]]
-    if target in row.ignored and row.results[target] in (Status.SOURCE, Status.MISSING, Status.UNKNOWN):
+    if target in ignored_gaps(row):
         return f"{text} (ignored)", "dim"
     return text, color
+
+
+def apart_from_ignored(rows: list[Row]) -> str:
+    """', apart from 2 ignored gaps' for a clean run that only passes because of --ignore NAME:TARGET."""
+    n = sum(len(ignored_gaps(r)) for r in rows)
+    return f", apart from {n} ignored gap{'s' * (n != 1)}" if n else ""
+
+
+def hidden_line(hidden: list[Row]) -> str:
+    """'3 packages with wheels for every target hidden', not counting those with only ignored gaps as such."""
+    only_ignored = sum(1 for r in hidden if ignored_gaps(r))
+    wheels = len(hidden) - only_ignored
+    parts = []
+    if wheels:
+        parts.append(f"{wheels} package{'s' * (wheels != 1)} with wheels for every target")
+    if only_ignored:
+        noun = "" if wheels else f" package{'s' * (only_ignored != 1)}"
+        parts.append(f"{only_ignored}{noun} with only ignored gaps")
+    return " and ".join(parts) + " hidden"
 
 
 def render_table(rows: list[Row], targets: list[Target], style: Style) -> list[str]:
@@ -670,7 +694,8 @@ def render_markdown(
         out = [f"### wheelgap: {len(gaps)} of {len(rows)} {noun} {'has' if len(gaps) == 1 else 'have'} gaps", ""]
     else:
         out = [
-            f"### wheelgap: every package has a wheel for {'all ' if n_t > 1 else ''}{n_t} target{'s' * (n_t > 1)}",
+            f"### wheelgap: every package has a wheel for {'all ' if n_t > 1 else ''}{n_t} target{'s' * (n_t > 1)}"
+            + apart_from_ignored(rows),
             "",
         ]
     pys = ", ".join(dict.fromkeys(t.python for t in targets))
@@ -687,10 +712,9 @@ def render_markdown(
             cells = [r.package.name, r.package.version or "?"] + [cell(r, t)[0] for t in targets]
             out.append("| " + " | ".join(_md(c) for c in cells) + " |")
         out.append("")
-        hidden = len(rows) - len(shown)
+        hidden = [] if args.all else [r for r in rows if r.ok]
         if hidden:
-            noun = "package" if hidden == 1 else "packages"
-            out += [f"{hidden} {noun} with wheels for every target hidden (`--all` to show).", ""]
+            out += [f"{hidden_line(hidden)} (`--all` to show).", ""]
 
     if gaps:
         out += [gap_summary(gaps, len(rows), plain), ""]
@@ -1086,10 +1110,9 @@ def main(argv: list[str] | None = None) -> int:
         for ln in render_table(shown, targets, style):
             print(ln)
         print()
-        hidden = len(rows) - len(shown)
+        hidden = [] if args.all else [r for r in rows if r.ok]
         if hidden:
-            noun = "package" if hidden == 1 else "packages"
-            print(style.dim(f"{hidden} {noun} with wheels for every target hidden (--all to show)"))
+            print(style.dim(f"{hidden_line(hidden)} (--all to show)"))
         if args.explain and gaps:
             if hidden:
                 print()
@@ -1114,7 +1137,8 @@ def main(argv: list[str] | None = None) -> int:
     n_t = len(targets)
     if not gaps:
         what = "The 1 package has" if len(rows) == 1 else f"All {len(rows)} packages have"
-        print(style.green(f"✓ {what} a wheel for {'every one of ' if n_t > 1 else ''}{n_t} target{'s' * (n_t > 1)}."))
+        every = f"{'every one of ' if n_t > 1 else ''}{n_t} target{'s' * (n_t > 1)}{apart_from_ignored(rows)}"
+        print(style.green(f"✓ {what} a wheel for {every}."))
         return 0
 
     for line in target_lines(gaps, targets, style):
