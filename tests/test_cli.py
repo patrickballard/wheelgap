@@ -1,10 +1,13 @@
 import json
+import platform
 import sys
 import sysconfig
 from pathlib import Path
 
+import packaging
 import pytest
 
+import wheelgap
 from wheelgap import cli
 from wheelgap.check import Status
 from wheelgap.cli import main
@@ -1663,3 +1666,14 @@ def test_requirements_note_hidden_with_quiet_config(capsys, fake_pypi, tmp_path)
     req.write_text("ranged\n", encoding="utf-8")
     code, out, err = run(capsys, str(req), "-p", "3.13", "-t", "linux-x86_64")
     assert "unpinned" not in err
+
+
+def test_version_includes_packaging(capsys):
+    with pytest.raises(SystemExit) as caught:
+        main(["--version"])
+    assert caught.value.code == 0
+    out, err = capsys.readouterr()
+    free_threaded = "t" if sysconfig.get_config_var("Py_GIL_DISABLED") else ""
+    python = f"{platform.python_implementation()} {platform.python_version()}{free_threaded}"
+    assert out == f"wheelgap {wheelgap.__version__} (packaging {packaging.__version__}, {python})\n"
+    assert not err
