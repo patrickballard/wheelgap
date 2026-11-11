@@ -266,7 +266,7 @@ _TWO_STAGES = "FROM python:3.13-alpine AS base\nFROM python:3.12-slim\n"
         (_TWO_STAGES + "RUN python - <<EOF\nfrom app import main\nEOF\n", _SLIM),
         # <<- strips leading tabs (only tabs) before comparing; << doesn't.
         (_TWO_STAGES + "RUN <<-EOF\n\tFROM base\n\t\tEOF\n", _SLIM),
-        (_TWO_STAGES + "RUN <<-EOF\nFROM base\n  EOF\nEOF\n", _SLIM),
+        (_TWO_STAGES + "RUN <<-EOF\n  EOF\nFROM base\nEOF\n", _SLIM),
         (_TWO_STAGES + "RUN <<EOF\n\tEOF\nFROM base\nEOF\n", _SLIM),
         # Every trailing \r is trimmed before comparing (then, for <<-, the leading tabs).
         (_TWO_STAGES.replace("\n", "\r\n") + "RUN <<EOF\r\nFROM base\r\nEOF\r\r\n", _SLIM),
@@ -276,7 +276,7 @@ _TWO_STAGES = "FROM python:3.13-alpine AS base\nFROM python:3.12-slim\n"
         # The body starts after the whole instruction, and is read as written: no continuations, no comments.
         (_TWO_STAGES + "RUN <<EOF \\\n    cat\nFROM base\nEOF\n", _SLIM),
         (_TWO_STAGES + "RUN <<EOF\necho \\\nEOF\nRUN echo \\\nFROM base\n", _SLIM),
-        (_TWO_STAGES + "RUN <<EOF\n# a comment\nFROM base\nEOF\n", _SLIM),
+        (_TWO_STAGES + "RUN <<#EOF\n# a comment\nFROM base\n#EOF\n", _SLIM),
         # `<< BITS))` in shell arithmetic is a heredoc to BuildKit, so the next `BITS))` line ends it.
         (_TWO_STAGES + "RUN echo $((1 << BITS))\nFROM base\nBITS))\n", _SLIM),
         # A heredoc in an earlier stage: its body can't redefine the stage.
@@ -284,6 +284,20 @@ _TWO_STAGES = "FROM python:3.13-alpine AS base\nFROM python:3.12-slim\n"
         # Exec form and other instructions have no heredocs, so the next line is an instruction.
         (_TWO_STAGES + 'RUN ["sh", "-c", "cat <<EOF"]\nFROM base\n', _ALPINE),
         (_TWO_STAGES + "CMD cat <<EOF\nFROM base\n", _ALPINE),
+        # Frontends that read heredocs as wheelgap does; and an old one is fine where no line has a `<<`.
+        *[
+            (f"{directive}\n{_TWO_STAGES}RUN <<EOF\nFROM base\nEOF\n", _SLIM)
+            for directive in [
+                "# syntax=docker/dockerfile:1",
+                "# syntax=docker/dockerfile:1-labs",
+                "# syntax=docker/dockerfile",
+                "#syntax = docker/dockerfile:latest",
+                "# check=skip=all\n# syntax=docker/dockerfile:1.28",
+                "// syntax=docker.io/docker/dockerfile:1.29.0-labs",
+                "# hello\n# syntax=docker/dockerfile:1.2",  # not a directive after another comment
+            ]
+        ],
+        ("# syntax=docker/dockerfile:1.2\n" + _TWO_STAGES + "RUN echo hi\nFROM base\n", _ALPINE),
     ],
 )
 def test_heredoc_bodies_are_not_instructions(tmp_path, text, expected):
@@ -549,6 +563,23 @@ def test_escape_directive_rules(tmp_path):
         ("FROM python:3.13\nRUN <<A <<B\nA\n", "unterminated heredoc <<B"),
         ("FROM python:3.13\nRUN cat <<EOF \\", "unterminated heredoc <<EOF"),  # ends mid-continuation too
         ("FROM python:3.13\nRUN echo $((1 << BITS))\n", r"unterminated heredoc <<BITS\)\)"),
+        # A `<<` under a `# syntax=` frontend that may read heredocs differently (none before 1.4).
+        *[
+            (f"{directive}\nFROM python:3.13-alpine AS base\nFROM python:3.12\n{line}\n", "frontend may read `<<`")
+            for directive in [
+                "# syntax=docker/dockerfile:1.2",
+                "# syntax=docker/dockerfile:1.3",
+                "# syntax=docker/dockerfile:1.3-labs",
+                "# syntax=docker/dockerfile:1.15.0",
+                "# syntax=docker/dockerfile:1.27.1-labs",
+                "# syntax=docker/dockerfile:1.28.0-rc1",
+                "# syntax=docker/dockerfile:1@sha256:" + "0" * 64,
+                "# syntax=example.com/frontend:1",
+                "#!/usr/bin/env buildctl\n# syntax=docker/dockerfile:1.2",
+                "//syntax=docker/dockerfile:1.2",
+            ]
+            for line in ["RUN <<EOF\nFROM base\nEOF", "RUN echo $((1<<2))"]
+        ],
         # Outside a heredoc, a Python import is a FROM with the wrong arguments.
         ("FROM python:3.13\nfrom app import main\n", "expected 'IMAGE' or 'IMAGE AS NAME'"),
     ],

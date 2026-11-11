@@ -69,6 +69,15 @@ class ImageTarget:
 
 _DIRECTIVE_RE = re.compile(r"^#\s*([A-Za-z]+)\s*=\s*(.+?)\s*$")
 _DIRECTIVES = {"syntax", "escape", "check"}  # the parser directives BuildKit knows
+# DirectiveParser's directiveRegexp (parser/directives.go), with Go's \s: [\t\n\f\r ], no \v.
+_SYNTAX_DIRECTIVE_RE = re.compile(r"([a-zA-Z][a-zA-Z0-9]*)[\t\n\f\r ]*=[\t\n\f\r ]*(.+?)[\t\n\f\r ]*$")
+# docker/dockerfile tags that read heredocs as BuildKit at cedaeca does (see _heredocs): the floating 1 and latest
+# channels, and 1.28 or later. Older ones differ: none before 1.4 (1.3 only in -labs), `<< EOF` (a space after <<)
+# isn't one before 1.16, and the lexer unquoted delimiters differently before 1.28 (compare parser.go and
+# shell/lex.go at dockerfile/1.3.0-labs, 1.15.0, 1.16.0 and 1.27.0 with 1.28.0).
+_HEREDOC_SYNTAX_RE = re.compile(
+    r"(?:docker\.io/)?docker/dockerfile(?::(?:1|latest|labs|1-labs|1\.(\d+)(?:\.\d+)?(?:-labs)?))?", re.ASCII
+)
 
 # Heredocs, as BuildKit reads them: see _heredocs.
 # Go's unicode.IsSpace. Unlike str.isspace, it doesn't count \x1c-\x1f.
@@ -340,6 +349,14 @@ def _heredoc_name(line: str, rest: str) -> str | None:
     return words[0]
 
 
+def _can_contain_heredoc(instruction: str, escape: str) -> bool:
+    """A shell-form RUN, COPY or ADD (or ONBUILD of those) with `<<` in it (canContainHeredoc in parser.go)."""
+    keyword, args = _split_command(instruction, escape)
+    if keyword == "onbuild" and args:
+        keyword, args = _split_command(args, escape)
+    return keyword in ("run", "copy", "add") and not _is_exec_form(instruction, args) and "<<" in instruction
+
+
 def _heredocs(instruction: str, escape: str = "\\") -> list[tuple[str, bool]]:
     """(delimiter, strip_tabs) for each heredoc BuildKit finds in one instruction, with continuations joined.
 
@@ -353,10 +370,7 @@ def _heredocs(instruction: str, escape: str = "\\") -> list[tuple[str, bool]]:
     https://github.com/moby/buildkit/blob/cedaeca8850a2bb536bbd1db72419f3cf491bdb5/frontend/dockerfile/parser/parser.go
     https://github.com/moby/buildkit/blob/cedaeca8850a2bb536bbd1db72419f3cf491bdb5/frontend/dockerfile/shell/lex.go
     """
-    keyword, args = _split_command(instruction, escape)
-    if keyword == "onbuild" and args:
-        keyword, args = _split_command(args, escape)
-    if keyword not in ("run", "copy", "add") or _is_exec_form(instruction, args) or "<<" not in instruction:
+    if not _can_contain_heredoc(instruction, escape):
         return []
     docs = []
     try:
@@ -394,6 +408,30 @@ def _escape_char(lines: list[str]) -> str:
     return escape
 
 
+def _syntax_directive(lines: list[str]) -> str | None:
+    """The frontend image a `# syntax=` (or `//syntax=`) directive names, found as BuildKit's DetectSyntax finds it.
+
+    Follows parseDirective and DirectiveParser in BuildKit's parser/directives.go at commit
+    cedaeca8850a2bb536bbd1db72419f3cf491bdb5: a first `#!` line is skipped, the directives must start their line,
+    and the image is the value up to its first space. (A Dockerfile that's all JSON can't have a FROM line.)
+    https://github.com/moby/buildkit/blob/cedaeca8850a2bb536bbd1db72419f3cf491bdb5/frontend/dockerfile/parser/directives.go
+    """
+    if lines and lines[0].startswith("#!"):
+        lines = lines[1:]
+    for comment in ("#", "//"):
+        seen: set[str] = set()
+        for line in lines:
+            if not line.startswith(comment):
+                break
+            m = _SYNTAX_DIRECTIVE_RE.match(line[len(comment) :].lstrip(_GO_SPACES))
+            if not m or m.group(1).lower() not in _DIRECTIVES or m.group(1).lower() in seen:
+                break
+            seen.add(m.group(1).lower())
+            if m.group(1).lower() == "syntax":
+                return m.group(2).split(" ", 1)[0]
+    return None
+
+
 def _from_lines(text: str) -> list[str]:
     """The arguments of every FROM instruction in order, with line continuations joined as Docker joins them.
 
@@ -403,9 +441,14 @@ def _from_lines(text: str) -> list[str]:
     written, with no continuations or comments. A line ends a body when, with every trailing \r trimmed (and, for
     `<<-`, its leading tabs), it's exactly the delimiter. A body the file ends in is an error.
     https://github.com/moby/buildkit/blob/cedaeca8850a2bb536bbd1db72419f3cf491bdb5/frontend/dockerfile/parser/parser.go
+
+    A `# syntax=` frontend that may read heredocs differently is an error when a line could have one.
     """
     lines = [raw.rstrip("\r") for raw in text.split("\n")]  # Docker's trimNewline drops every trailing \r
     escape = _escape_char(lines)
+    syntax = _syntax_directive(lines)
+    if syntax is not None and (m := _HEREDOC_SYNTAX_RE.fullmatch(syntax)) and int(m.group(1) or 28) >= 28:
+        syntax = None  # reads heredocs as _heredocs does
     esc = re.escape(escape)
     continued = re.compile(rf"(?<!{esc}){esc}[ \t]*$")  # one escape char at the end, not two
     found = []
@@ -426,6 +469,14 @@ def _from_lines(text: str) -> list[str]:
                 raise DockerfileError("FROM with no image")
             found.append(words[1])
 
+    def heredocs_in(instruction: str) -> list[tuple[str, bool]]:
+        if syntax is not None and _can_contain_heredoc(instruction, escape):
+            raise DockerfileError(
+                f"# syntax={syntax}: wheelgap reads heredocs as docker/dockerfile 1.28 and later do, and this "
+                f"frontend may read `<<` in {instruction.strip()[:60]!r} differently, pass -p/-t instead"
+            )
+        return _heredocs(instruction, escape)
+
     for line in lines:
         if heredocs:  # a body line: never an instruction, a comment or a continuation
             name, strip_tabs = heredocs[0]
@@ -442,11 +493,11 @@ def _from_lines(text: str) -> list[str]:
             continue
         instruction = "".join([*parts, line])  # Docker joins continued lines with nothing in between
         finish(instruction.strip(), joined=bool(parts))
-        heredocs = _heredocs(instruction, escape)
+        heredocs = heredocs_in(instruction)
         parts = []
     if parts:  # the file ended mid-continuation: Docker still reads what's there
         finish("".join(parts).strip(), joined=len(parts) > 1)
-        heredocs = _heredocs("".join(parts), escape)
+        heredocs = heredocs_in("".join(parts))
     if heredocs:
         raise DockerfileError(f"unterminated heredoc <<{heredocs[0][0]} (Docker rejects it)")
     return found
