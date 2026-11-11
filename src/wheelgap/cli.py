@@ -684,14 +684,15 @@ def refuse_pyodide_url(spec: str, how: str = "--offline") -> None:
 
 
 def unpinned_requirement_names(source: Source) -> list[str]:
-    """Index requirements that aren't an exact pin. Skipped and non-index lines are omitted."""
-    names = []
+    """Index requirements that aren't an exact pin, once each. Skipped and non-index lines are omitted, and so are
+    packages with an error (an unusable constraint), since nothing was checked for them."""
+    names: dict[str, str] = {}
     for package in source.packages:
-        if package.skip:
+        if package.skip or package.error:
             continue
         if package.version is None or package.spec:
-            names.append(package.name)
-    return names
+            names.setdefault(package.key, package.name)
+    return list(names.values())
 
 
 def note_unpinned_requirements(sources: list[Source]) -> None:
