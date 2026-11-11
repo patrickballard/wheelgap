@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -246,27 +247,38 @@ def git_ref_input(arg: str) -> tuple[str, str] | None:
     return ref, path
 
 
-def read_git_ref(ref: str, path: str, into: Path) -> str:
-    """Write `git show REF:PATH` to a file named like PATH in `into` (so its format is detected) and return it.
-
-    git runs with an argument list, never a shell, and `--end-of-options` keeps a ref that starts with `-` from
-    being read as an option.
-    """
+def _git_blob(ref: str, path: str) -> subprocess.CompletedProcess[bytes]:
+    # `git cat-file blob`: plumbing, so no textconv, filters or pager, and a tree (a folder) is refused rather
+    # than listed. An argument list, never a shell, and --end-of-options keeps a ref that starts with `-` from
+    # being read as an option.
     try:
-        done = subprocess.run(
-            ["git", "show", "--end-of-options", f"{ref}:{path}"],
-            capture_output=True,
-            check=False,
+        return subprocess.run(
+            ["git", "cat-file", "blob", "--end-of-options", f"{ref}:{path}"], capture_output=True, check=False
         )
     except FileNotFoundError:
         raise GitInputError(f"{ref}:{path} looks like a git ref, but git isn't on PATH") from None
+
+
+def read_git_ref(ref: str, path: str, into: Path) -> str:
+    """Write the file at REF:PATH to a file named like PATH in `into` (so its format is detected) and return it.
+
+    The pyproject.toml next to it at that ref comes along when there is one: an older poetry.lock takes its
+    direct dependencies from there, so leaving it behind would change the answer for that side.
+    """
+    done = _git_blob(ref, path)
     if done.returncode != 0:
-        message = done.stderr.decode(errors="replace").strip() or f"git show exited {done.returncode}"
+        message = done.stderr.decode(errors="replace").strip() or f"git exited {done.returncode}"
         raise GitInputError(f"can't read {ref}:{path} from git: {message}")
     side = into / str(len(list(into.iterdir())))
     side.mkdir()
-    out = side / Path(path.replace("\\", "/")).name
+    posix = path.replace("\\", "/")
+    out = side / posixpath.basename(posix)
     out.write_bytes(done.stdout)
+    if out.name != "pyproject.toml":
+        folder = posixpath.dirname(posix)
+        project = _git_blob(ref, f"{folder}/pyproject.toml" if folder else "pyproject.toml")
+        if project.returncode == 0:  # none at that ref is normal: nothing to bring along
+            (side / "pyproject.toml").write_bytes(project.stdout)
     return str(out)
 
 
