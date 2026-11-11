@@ -306,6 +306,14 @@ python -m wheelgap.scan --top 5000 --out coverage.json
 
 This checks the latest release of the most-downloaded packages (from [top-pypi-packages](https://hugovk.dev/top-pypi-packages/)) against the eight common platforms (and Pyodide), for Python 3.13, 3.14, 3.14t, 3.15 and 3.15t by default, and writes one JSON file with per-platform totals. It's the data behind the [coverage tracker on the roadmap](https://github.com/wheelgap/wheelgap/discussions/43).
 
+### Comparing two lockfiles
+
+```bash
+python -m wheelgap.diff old/uv.lock uv.lock -p 3.13 -t linux-aarch64,musl-aarch64
+```
+
+This checks both lockfiles and lists the packages that got worse on a target (a wheel that became a source build, say) and the new packages with gaps, so a dependency bump that drops a platform fails CI. It exits 1 if there are any, 0 if not, and 2 on bad input. A package that can no longer be checked (`unknown`) counts as worse. It's a module entry point for now; `wheelgap diff` will follow.
+
 ### With an AI coding agent
 
 wheelgap ships a **`check-wheels` skill** that teaches coding agents to run it, read its JSON and suggest fixes. It follows the open [Agent Skills](https://agentskills.io/) format.
