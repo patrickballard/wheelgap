@@ -498,9 +498,12 @@ class Server:
 
     def _run(self, msg_id: str | int, call: _Call, name: str, arguments: dict[str, Any]) -> None:
         """On the worker: run one call and send its result, unless it was cancelled."""
+        if call.cancelled:  # cancelled while it waited for the worker: don't start it
+            with self._lock:
+                if self._calls.get(msg_id) is call:
+                    del self._calls[msg_id]
+            return
         try:
-            if call.cancelled:  # cancelled while it waited for the worker: don't start it
-                return
             if call.token is None:
                 result = self._call(name, arguments)
             else:
