@@ -44,7 +44,7 @@ uvx wheelgap@latest -p 3.13 -t linux-aarch64,musl-aarch64 --json
 
 ## After a dependency upgrade
 
-`uvx wheelgap@latest diff OLD NEW -p 3.13 -t linux-aarch64 --json` lists the packages that got worse on a target and the new packages with gaps (exit 1 if any). `OLD` can be a git ref such as `origin/main:uv.lock` or `HEAD:uv.lock`; a package that can no longer be checked counts as worse.
+`uvx wheelgap@latest diff OLD NEW -p 3.13 -t linux-aarch64 --json` lists the packages that got worse on a target and the new packages with gaps (exit 1 if any). `OLD` can be a git ref such as `origin/main:uv.lock` or `HEAD:uv.lock` (the path is relative to the repository root; fetch the base ref first in a shallow CI checkout); a package that can no longer be checked counts as worse. `[tool.wheelgap]` settings don't apply to `diff`, so always pass `-p` and `-t`.
 
 wheelgap checks wheel availability only, not whether a package works without the GIL.
 

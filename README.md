@@ -157,7 +157,7 @@ To accept a gap on one target only, add the target after a colon: `--ignore psyc
 
 Use `-q` / `--quiet` (or `quiet = true` in `[tool.wheelgap]`) to show only the gap summary and package names. Clean runs without ignored packages are silent, JSON and Markdown output are unchanged, and quiet text output cannot be combined with `--explain` (`--json --explain` and `--markdown --explain` work).
 
-### Check the uv dependencies you actually install
+### Check the dependencies you actually install
 
 With no selection options, wheelgap keeps its conservative behavior: all project/workspace extras
 and dependency groups count. For `uv.lock` inputs, select a deployment's dependencies explicitly:
@@ -217,8 +217,8 @@ including local workspace dependencies, rather than enabling every extra of ever
 Unresolved marker conditions (including uv's synthetic conflict markers and unknown OS releases)
 remain conservative: wheelgap can still report a possible gap rather than silently hide one.
 Selection itself needs no network. Index refreshes (`--online`, or a target outside the lockfile's
-`requires-python`) only look up packages in the selected graph. Configured `extras` only apply to `uv.lock` inputs, and configured `groups` to `uv.lock` and Poetry 2.x
-`poetry.lock` inputs; other inputs are checked as usual.
+`requires-python`) only look up packages in the selected graph. Configured `extras` only apply to `uv.lock` inputs, and configured `groups` to `uv.lock`, Poetry 2.x
+`poetry.lock` and `pdm.lock` inputs; other inputs are checked as usual.
 
 ### Check a library's direct dependencies
 
