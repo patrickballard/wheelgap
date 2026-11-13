@@ -206,7 +206,7 @@ def lock_without_release(fixtures):
 def test_pyodide_release_prefers_info_version(fixtures):
     data = lock_without_release(fixtures)
     data["info"]["version"] = "0.29.0"
-    lock = parse_pyodide_lock(data, "https://cdn.example/pyodide/v0.30.0/full/pyodide-lock.json")
+    lock = parse_pyodide_lock(data, "https://cdn.jsdelivr.net/pyodide/v0.30.0/full/pyodide-lock.json")
     assert lock.pyodide_version == "0.29.0"
 
 
