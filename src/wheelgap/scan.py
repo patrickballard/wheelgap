@@ -19,6 +19,8 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from packaging.version import InvalidVersion, Version
+
 from . import __version__
 from .api import Result, check_packages
 from .check import Status
@@ -69,6 +71,34 @@ def scan(
     return check_packages([r["project"] for r in rows], targets, workers=workers, pyodide_locks=pyodide_locks)
 
 
+def _bundled_version_differs(result: Result) -> bool:
+    """Whether Pyodide's version differs from the release the scan checked."""
+    if result.bundled_version is None or result.version is None:
+        return False
+    try:
+        return Version(result.bundled_version) != Version(result.version)
+    except InvalidVersion:
+        return result.bundled_version != result.version
+
+
+def _package_entry(rank: int, row: dict, result: Result, targets: list[Target]) -> dict:
+    entry = {
+        "rank": rank,
+        "name": result.name,
+        "version": result.version,
+        "downloads": row.get("download_count"),
+        "pure": result.pure,
+        "error": result.error,
+        "results": [result.statuses[t].value for t in targets],
+    }
+    if Status.BUNDLED in result.statuses.values():
+        # Locks for different Pythons can ship different versions: Result keeps the first applied lock's version
+        # (in pyodide_locks order); bundled_version_differs compares that with the scanned release.
+        entry["bundled_version"] = result.bundled_version
+        entry["bundled_version_differs"] = _bundled_version_differs(result)
+    return entry
+
+
 def report(
     rows: list[dict],
     results: list[Result],
@@ -107,15 +137,7 @@ def report(
         "lookup_errors": sum(1 for r in results if r.error),
         "summary": summarise(results, targets),
         "packages": [
-            {
-                "rank": rank,
-                "name": r.name,
-                "version": r.version,
-                "downloads": row.get("download_count"),
-                "pure": r.pure,
-                "error": r.error,
-                "results": [r.statuses[t].value for t in targets],
-            }
+            _package_entry(rank, row, r, targets)
             for rank, (row, r) in enumerate(zip(rows, results, strict=True), start=1)
         ],
     }
