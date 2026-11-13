@@ -597,8 +597,8 @@ def tracker_notes(
     if they were (see tracker.lookup).
 
     Only names positively from PyPI are looked up (notes_eligible). A note is kept for the gap targets on its
-    platforms, and only when it's about the checked release (Note.applies_to): the tracker checked its latest
-    release, which may not be yours.
+    platforms (and its Pythons, if it lists any: Note.covers), and only when it's about the checked release
+    (Note.applies_to): the tracker checked its latest release, which may not be yours.
     """
     eligible = [r for r in rows if notes_eligible(r, targets, source_of)]
     found, cut = tracker.lookup([r.package.key for r in eligible], read_cache, write_cache)

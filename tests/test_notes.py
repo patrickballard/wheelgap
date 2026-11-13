@@ -107,6 +107,13 @@ def test_per_python_note_shown_for_matching_python_and_not_another(capsys, tmp_p
     assert pkg2["notes"] == []
 
 
+def test_free_threaded_note_is_not_shown_for_the_regular_build(capsys, tmp_path, tracker):
+    tracker.add("pkg", note(python=["3.14t"]))
+    folder = uv_lock(tmp_path)
+    pkg = explain_json(capsys, folder, "-p", "3.14,3.14t", "-t", "linux-x86_64")["pkg"]
+    assert pkg["notes"] == [{**NOTE, "python": ["3.14t"], "targets": ["3.14t linux-x86_64"]}]
+
+
 def test_note_without_python_shown_for_all_pythons(capsys, tmp_path, tracker):
     tracker.add("pkg", note())
     folder = uv_lock(tmp_path)
