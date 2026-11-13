@@ -607,7 +607,7 @@ def tracker_notes(
         if r.package.key not in found:
             continue
         gaps = gap_targets(r, targets)
-        matched = [(note, [t for t in gaps if note.covers(t.platform)]) for note in found[r.package.key]]
+        matched = [(note, [t for t in gaps if note.covers(t)]) for note in found[r.package.key]]
         if kept := [(note, ts) for note, ts in matched if ts and note.applies_to(r.package.version)]:
             out[id(r)] = kept
     return out, cut
