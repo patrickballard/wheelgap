@@ -1650,9 +1650,8 @@ def test_a_2025_related_task_key_stays_handshake():
 
 def test_the_roots_error_clips_long_paths_and_roots(fake_pypi, tmp_path, monkeypatch):
     two_projects(tmp_path, monkeypatch)
-    # No folder on disk: _root_paths accepts any absolute path, and creating a 300-character path fails on
-    # Windows without long-path support (the name-too-long handling this test exercises).
     deep = tmp_path / ("d" * 150) / ("e" * 150)
+    deep.mkdir(parents=True)
     (reply,) = run(roots_call(1, roots_answer_for(deep, deep), path="x" * 1000))
     text = reply["result"]["content"][0]["text"]
     assert reply["result"]["isError"] is True and len(text) < 500 and "..." in text

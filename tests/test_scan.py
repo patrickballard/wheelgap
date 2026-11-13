@@ -136,10 +136,11 @@ def test_scan_reports_the_bundled_version(fake_pypi, fixtures, tmp_path, capsys)
     assert labels == [t.label(True) for t in scan_targets("3.13")]
     fastlib, purewheel = data["packages"]
     assert fastlib["bundled_version"] == "2.0.0"
+    assert fastlib["bundled_versions"] == {"3.13": "2.0.0"}
     assert fastlib["bundled_version_differs"] is False
     assert len(fastlib["results"]) == len(labels)
     assert {"rank", "name", "version", "downloads", "pure", "error", "results"} <= fastlib.keys()
-    assert "bundled_version" not in purewheel and "bundled_version_differs" not in purewheel
+    assert not {"bundled_version", "bundled_versions", "bundled_version_differs"} & purewheel.keys()
 
 
 def test_scan_reports_when_the_bundled_version_differs(fake_pypi, tmp_path, capsys):
@@ -162,7 +163,7 @@ def test_scan_reports_when_the_bundled_version_differs(fake_pypi, tmp_path, caps
     assert package["bundled_version_differs"] is True
 
 
-def test_scan_reports_the_first_bundled_lock_version(fake_pypi, tmp_path, capsys):
+def test_scan_reports_each_locks_bundled_version(fake_pypi, tmp_path, capsys):
     top = write_top(tmp_path, ["fastlib"])
     first = tmp_path / "pyodide-lock-0.29.0.json"
     second = tmp_path / "pyodide-lock-0.30.0.json"
@@ -186,14 +187,14 @@ def test_scan_reports_the_first_bundled_lock_version(fake_pypi, tmp_path, capsys
     )
     base = ["--python", "3.13,3.14", "--top-packages", str(top)]
 
-    assert main([*base, "--pyodide-lock", str(first), "--pyodide-lock", str(second)]) == 0
-    data = json.loads(capsys.readouterr().out)
-    assert data["packages"][0]["bundled_version"] == "2.0.0"
-    assert [lock["pyodide_version"] for lock in data["pyodide_locks"]] == ["0.29.0", "0.30.0"]
-
-    assert main([*base, "--pyodide-lock", str(second), "--pyodide-lock", str(first)]) == 0
-    data = json.loads(capsys.readouterr().out)
-    assert data["packages"][0]["bundled_version"] == "3.0.0"
+    # The locks ship different versions, so there's no single bundled_version, whatever order they're passed in.
+    for order in ([first, second], [second, first]):
+        locks = [arg for lock in order for arg in ("--pyodide-lock", str(lock))]
+        assert main([*base, *locks]) == 0
+        package = json.loads(capsys.readouterr().out)["packages"][0]
+        assert package["bundled_version"] is None
+        assert package["bundled_versions"] == {"3.13": "2.0.0", "3.14": "3.0.0"}
+        assert package["bundled_version_differs"] is True  # the scan checked 2.0.0; 3.14's Pyodide ships 3.0.0
 
 
 def lock_without_release(fixtures):
@@ -221,9 +222,15 @@ def test_pyodide_release_from_url(fixtures, source):
     assert parse_pyodide_lock(lock_without_release(fixtures), source).pyodide_version == "0.29.5"
 
 
-def test_pyodide_release_prefers_url_to_filename(fixtures):
-    source = "https://cdn.example/pyodide/v0.29.5/full/pyodide-lock-0.28.0.json"
-    assert parse_pyodide_lock(lock_without_release(fixtures), source).pyodide_version == "0.29.5"
+def test_pyodide_release_is_unknown_when_url_and_filename_disagree(fixtures):
+    source = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/pyodide-lock-0.28.0.json"
+    assert parse_pyodide_lock(lock_without_release(fixtures), source).pyodide_version == "?"
+
+
+def test_pyodide_release_ignores_paths_on_other_hosts(fixtures):
+    # Only the file name counts away from Pyodide's own release URLs.
+    source = "https://mirror.example/pyodide/v0.29.5/full/pyodide-lock-0.28.0.json"
+    assert parse_pyodide_lock(lock_without_release(fixtures), source).pyodide_version == "0.28.0"
 
 
 @pytest.mark.parametrize(
@@ -243,6 +250,10 @@ def test_pyodide_release_from_filename(fixtures, tmp_path, name):
         "https://example.com/2024/05/pyodide-lock.json",
         "https://example.com/pyodide/v0.29/full/pyodide-lock.json",
         "pyodide-lock-2024-05.json",
+        # Another project's release, or a mirror's own numbering: not Pyodide's release.
+        "https://github.com/acme/webapp/releases/download/2.1.0/pyodide-lock.json",
+        "https://mirror.example/pyodide/1.0.0/pyodide-lock.json",
+        "https://cdn.jsdelivr.net/npm/acme/v1.2.3/pyodide-lock.json",
     ],
 )
 def test_pyodide_release_stays_unknown(fixtures, source):

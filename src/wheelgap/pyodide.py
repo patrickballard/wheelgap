@@ -10,6 +10,7 @@ import urllib.error
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
@@ -39,22 +40,29 @@ _RELEASE_FILENAMES = (
 def _release_from_source(source: str) -> str | None:
     """The Pyodide release a lock's URL or file name names, when info.version is missing.
 
-    Only a release path (`/pyodide/v0.29.5/`, `/releases/download/0.29.5/`) or a lock file named
-    `pyodide-lock-0.29.5.json` (and the like) counts, so unrelated numbers in a path are ignored.
+    A path only counts on Pyodide's own release URLs (`cdn.jsdelivr.net/pyodide/v0.29.5/...` and
+    `github.com/pyodide/pyodide/releases/download/0.29.5/...`): elsewhere a number in the path may be another
+    project's release or a mirror's own numbering. Otherwise only a lock file named `pyodide-lock-0.29.5.json`
+    (and the like) counts. When the path and the file name disagree, neither is trusted.
     """
+    from_path = None
     if source.lower().startswith(("http://", "https://")):
-        path = source.split("://", 1)[1].split("?", 1)[0].split("#", 1)[0]
-        parts = path.split("/")
-        for parent, child in zip(parts, parts[1:], strict=False):
-            if parent in ("pyodide", "download") and (match := _RELEASE.fullmatch(child)):
-                return match.group(1)
+        url = urlsplit(source)
+        host, parts = (url.hostname or "").lower(), url.path.split("/")
         name = parts[-1]
+        release = None
+        if host == "cdn.jsdelivr.net" and parts[1:2] == ["pyodide"] and len(parts) > 3:
+            release = parts[2]
+        elif host == "github.com" and parts[1:5] == ["pyodide", "pyodide", "releases", "download"] and len(parts) > 6:
+            release = parts[5]
+        if release is not None and (match := _RELEASE.fullmatch(release)):
+            from_path = match.group(1)
     else:
         name = Path(source).name
-    for pattern in _RELEASE_FILENAMES:
-        if match := pattern.fullmatch(name):
-            return match.group(1)
-    return None
+    from_name = next((m.group(1) for pattern in _RELEASE_FILENAMES if (m := pattern.fullmatch(name))), None)
+    if from_path and from_name and from_path != from_name:
+        return None
+    return from_path or from_name
 
 
 @dataclass(frozen=True)
