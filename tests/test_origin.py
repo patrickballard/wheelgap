@@ -322,6 +322,13 @@ def test_conda_forge_keeps_a_name_another_input_places_on_a_private_index(capsys
     assert "didn't look up 1 package whose index isn't known to be PyPI (nowheels)" in err
 
 
+def test_conda_forge_still_sends_a_public_range_checked_for_several_pythons(capsys, fake_pypi):
+    # End to end: the real lookups mark each Python's resolution as found on pypi.org, so the range isn't private.
+    flags = ("-p", "3.13,3.14", "-t", "linux-aarch64", "--explain", "--no-cache", "--conda-forge")
+    _, _, err = run(capsys, "nowheels>=0.1", *flags)
+    assert set(conda_calls(fake_pypi)) == {API + "nowheels"} and "didn't look up" not in err
+
+
 def test_conda_forge_note_counts_two_spellings_of_a_name_once(capsys, fake_pypi, tmp_path):
     lock, reqs = two_inputs(tmp_path)
     (tmp_path / "b" / "requirements.txt").write_text("NoWheels==0.9\n", encoding="utf-8")
@@ -335,6 +342,8 @@ def test_notes_keep_a_name_another_input_places_on_a_private_index(capsys, fake_
     run(capsys, reqs, "-t", "linux-x86_64", *EXPLAIN, "--notes")
     assert tracker.calls == [f"{notes.TRACKER}/nowheels.json"]  # alone, it's PyPI's
     tracker.calls.clear()
+    _, _, err = run(capsys, reqs, "-t", "linux-x86_64", *EXPLAIN)
+    assert "add --notes" in err  # alone, sending it is suggested
     _, out, _ = run(capsys, lock, reqs, "-t", "linux-x86_64", *EXPLAIN, "--notes")
     assert tracker.calls == [] and "note from the wheelgap tracker" not in out
     _, _, err = run(capsys, lock, reqs, "-t", "linux-x86_64", *EXPLAIN)
