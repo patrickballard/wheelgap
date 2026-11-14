@@ -661,6 +661,8 @@ def render_explain(
                 limit=EXPLAIN_LIMIT,
                 dim=style.dim,
                 align=True,
+                no_binary=r.package.no_binary,
+                only_binary=r.package.only_binary,
             )
             out += [f"  {line}" for line in lines]
             out.append("")
@@ -788,6 +790,8 @@ def report_json(
                         t,
                         r.package.yanked,
                         r.package.requires_python_rejected,
+                        no_binary=r.package.no_binary,
+                        only_binary=r.package.only_binary,
                     )
                 ]
                 for t in gap_targets(r, targets)
