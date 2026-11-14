@@ -3174,3 +3174,15 @@ def test_pixi_lock_counts_conda_packages_in_text(capsys, tmp_path, fake_pypi):
     (tmp_path / "pixi.lock").write_text(six, encoding="utf-8")
     code, out, _ = run(capsys, str(tmp_path), "-p", "3.13", "-t", "linux-x86_64")
     assert "skipped 7 non-index packages: gitdep (git), 6 conda packages (not on PyPI)\n" in out
+
+
+def test_dependency_needed_from_a_later_patch_release_is_checked(capsys, fake_pypi, tmp_path):
+    # #281: -p 3.13 covers 3.13.1 and later too, so a dependency gated on them is checked, not hidden as n/a
+    marker = "python_full_version >= '3.13.1'"
+    lock = UV_ROOT + f'dependencies = [{{ name = "a", marker = "{marker}" }}]\n' + sdist_block("a")
+    (tmp_path / "uv.lock").write_text(lock, encoding="utf-8")
+    code, out, err = run(capsys, str(tmp_path), "-p", "3.13", "-t", "linux-x86_64", "--json")
+    assert not err and not fake_pypi
+    package = next(p for p in json.loads(out)["packages"] if p["name"] == "a")
+    assert package["results"] == {"linux-x86_64": "source"}
+    assert code == 1
