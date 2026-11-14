@@ -280,6 +280,17 @@ def test_private_names_include_a_name_a_lock_cant_place(fake_pypi, tmp_path):
     assert origin.private_names(sources, env=EMPTY) == {"nowheels"}
 
 
+def test_private_names_cover_another_entry_of_the_same_input():
+    # One uv.lock that forks a name between pypi.org and another index: the pypi.org entry is kept in too.
+    on_pypi = Package("nowheels", "0.9", registry="https://pypi.org/simple")
+    elsewhere = Package("nowheels", "0.9", registry="https://pkgs.acme.example/simple")
+    source = Source("uv.lock", [on_pypi, elsewhere])
+    assert origin.known_pypi(on_pypi, source, env=EMPTY)  # going by that entry alone
+    private = origin.private_names([source], env=EMPTY)
+    assert private == {"nowheels"}
+    assert not origin.known_pypi(on_pypi, source, env=EMPTY, private=private)
+
+
 def test_private_names_with_another_index_is_every_name():
     pkg = Package("nowheels", "0.9", registry="https://pypi.org/simple")
     sources = [Source("uv.lock", [pkg])]
