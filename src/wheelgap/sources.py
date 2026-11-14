@@ -491,7 +491,9 @@ def _select_poetry(source: Source, selection: UvSelection) -> None:
         raise SourceError(f"{source.label}: unknown groups: {', '.join(sorted(unknown))}")
     if selection.no_dev and "dev" not in known:
         # Like `poetry install --without dev` on a project with no dev group (Poetry 2.5.1).
-        raise SourceError(f"{source.label}: Group(s) not found: dev (via --no-dev)")
+        # Without pyproject.toml an empty dev group can't be seen (the lock only lists groups that have packages).
+        unseen = "" if pyproject is not None and pyproject.is_file() else "; no pyproject.toml beside it to declare one"
+        raise SourceError(f"{source.label}: Group(s) not found: dev (via --no-dev){unseen}")
     if selection.only_groups:
         chosen = set(selection.only_groups | selection.groups)
     else:

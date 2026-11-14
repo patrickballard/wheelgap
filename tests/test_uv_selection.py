@@ -570,7 +570,9 @@ def test_poetry_lock_no_dev_without_a_dev_group_is_an_error(tmp_path, capsys, fa
     if pyproject is not None:
         (tmp_path / "pyproject.toml").write_text(pyproject, encoding="utf-8")
     assert main([str(tmp_path), *argv]) == 2
-    assert "Group(s) not found: dev (via --no-dev)" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "Group(s) not found: dev (via --no-dev)" in err
+    assert ("no pyproject.toml beside it to declare one" in err) == (pyproject is None)
     assert main([str(tmp_path), *argv[1:], "-t", "linux-x86_64", "-p", "3.13"]) == 0  # fine without --no-dev
     assert fake_pypi == []
 
