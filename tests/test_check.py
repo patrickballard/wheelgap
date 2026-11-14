@@ -366,3 +366,29 @@ def test_python_full_version_and_implementation_version_markers():
     assert not marker_holds("python_full_version >= '3.13.2' and sys_platform == 'win32'", lin313)
     assert marker_holds("extra == 'api' and python_full_version >= '3.13.2'", lin313, extras=frozenset({"api"}))
     assert not marker_holds("extra == 'api' and python_full_version >= '3.13.2'", lin313, extras=frozenset({"other"}))
+
+
+def test_status_for_and_explain_with_format_control():
+    from wheelgap.check import explain, explain_lines
+
+    (lin,) = build_targets(["3.13"], ["linux-x86_64"])
+    (win,) = build_targets(["3.13"], ["win-amd64"])
+    files = ["fastlib-2.0.0-cp313-cp313-manylinux_2_17_x86_64.whl", "fastlib-2.0.0.tar.gz"]
+
+    assert status_for(files, lin, no_binary=True) is Status.SOURCE
+    assert status_for([files[0]], lin, no_binary=True) is Status.MISSING
+    assert status_for(files, win, only_binary=True) is Status.MISSING
+    assert status_for(files, lin, only_binary=True) is Status.WHEEL
+
+    # With a live wheel and a yanked sdist, --no-binary falls back to the yanked sdist.
+    yanked_sdist = frozenset({"fastlib-2.0.0.tar.gz"})
+    assert status_for(files, lin, yanked=yanked_sdist, no_binary=True) is Status.SOURCE
+
+    assert explain(files, lin, no_binary=True) == [
+        ("fastlib-2.0.0-cp313-cp313-manylinux_2_17_x86_64.whl", "ignored (--no-binary)")
+    ]
+    assert explain_lines(files, lin, no_binary=True) == [
+        "fastlib-2.0.0-cp313-cp313-manylinux_2_17_x86_64.whl  ignored (--no-binary)"
+    ]
+    lines_only_bin = explain_lines(files, win, only_binary=True)
+    assert any("--only-binary forbids building from source" in line for line in lines_only_bin)

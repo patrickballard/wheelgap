@@ -88,6 +88,8 @@ class Result:
     yanked: frozenset[str] = frozenset()
     # Files of a pinned release whose Requires-Python excludes the target Python, mapped to their --explain reason.
     requires_python_rejected: dict[str, str] = field(default_factory=dict)
+    no_binary: bool = False
+    only_binary: bool = False
 
     @property
     def ok(self) -> bool:
@@ -111,7 +113,14 @@ class Result:
         """Per SOURCE or MISSING target, (filename, reason) for every wheel it can't use, the closest misses first."""
         files = list(self.files)
         return {
-            t: explain(files, t, self.yanked, self.requires_python_rejected)
+            t: explain(
+                files,
+                t,
+                self.yanked,
+                self.requires_python_rejected,
+                no_binary=self.no_binary,
+                only_binary=self.only_binary,
+            )
             for t, s in self.statuses.items()
             if s in _EXPLAINED
         }
@@ -124,7 +133,14 @@ class Result:
         files = list(self.files)
         return {
             t: "\n".join(
-                explain_lines(files, t, yanked=self.yanked, requires_python_rejected=self.requires_python_rejected)
+                explain_lines(
+                    files,
+                    t,
+                    yanked=self.yanked,
+                    requires_python_rejected=self.requires_python_rejected,
+                    no_binary=self.no_binary,
+                    only_binary=self.only_binary,
+                )
             )
             for t, s in self.statuses.items()
             if s in _EXPLAINED
@@ -175,6 +191,8 @@ def _result(
         {t: tuple(via[t]) for t, s in statuses.items() if s in _EXPLAINED and t in via},
         pkg.yanked,
         pkg.requires_python_rejected,
+        pkg.no_binary,
+        pkg.only_binary,
     )
 
 

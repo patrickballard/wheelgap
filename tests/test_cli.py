@@ -3186,3 +3186,55 @@ def test_dependency_needed_from_a_later_patch_release_is_checked(capsys, fake_py
     package = next(p for p in json.loads(out)["packages"] if p["name"] == "a")
     assert package["results"] == {"linux-x86_64": "source"}
     assert code == 1
+
+
+def test_requirements_no_binary_and_only_binary(capsys, tmp_path, fake_pypi):
+    req = tmp_path / "requirements.txt"
+    # :all: --no-binary, then overridden for fastlib by :none: / --only-binary in included file
+    req.write_text(
+        "--no-binary :all:\npurewheel==3.1\nfastlib==2.0.0\n",
+        encoding="utf-8",
+    )
+    code, out, err = run(capsys, str(req), "-p", "3.13", "-t", "linux-x86_64", "--explain", "--no-notes")
+    assert code == 1 and not err
+    assert "ignored (--no-binary)" in out
+    assert "purewheel-3.1-py3-none-any.whl" in out
+    assert "fastlib-2.0.0-cp313-cp313-manylinux_2_17_x86_64.whl" in out
+
+    code, out, err = run(capsys, str(req), "-p", "3.13", "-t", "linux-x86_64", "--json", "--explain", "--no-notes")
+    assert code == 1 and not err
+    data = json.loads(out)
+    pkgs = {p["name"]: p for p in data["packages"]}
+    assert pkgs["fastlib"]["results"] == {"linux-x86_64": "source"}
+    assert pkgs["purewheel"]["results"] == {"linux-x86_64": "missing"}
+    assert pkgs["fastlib"]["rejected"]["linux-x86_64"] == [
+        {"file": "fastlib-2.0.0-cp313-cp313-manylinux_2_17_x86_64.whl", "reason": "ignored (--no-binary)"}
+    ]
+
+    # Reset with :none: and switch to --only-binary via -r included file; named package vs :all:
+    inc = tmp_path / "extra.txt"
+    inc.write_text("--only-binary=:all:\n--only-binary=:none:\n--only-binary=fastlib\n", encoding="utf-8")
+    req.write_text(
+        "--no-binary :all:\n--no-binary :none:\n-r extra.txt\nfastlib==2.0.0\nnowheels==0.9\n",
+        encoding="utf-8",
+    )
+    code, out, err = run(capsys, str(req), "-p", "3.13", "-t", "win-amd64", "--explain", "--no-notes")
+    assert code == 1 and not err
+    assert "--only-binary forbids building from source" in out
+
+    code, out, err = run(capsys, str(req), "-p", "3.13", "-t", "win-amd64", "--json")
+    assert code == 1 and not err
+    pkgs = {p["name"]: p for p in json.loads(out)["packages"]}
+    assert pkgs["fastlib"]["results"] == {"win-amd64": "missing"}
+    assert pkgs["nowheels"]["results"] == {"win-amd64": "source"}
+
+    # Backslash-continued quoted and unquoted comma lists join without adding whitespace, matching pip.
+    req.write_text(
+        '--no-binary "fastlib,\\\npurewheel"\n--only-binary fastlib,\\\nnowheels\npurewheel==3.1\nnowheels==0.9\n',
+        encoding="utf-8",
+    )
+    code, out, err = run(capsys, str(req), "-p", "3.13", "-t", "linux-x86_64", "--json")
+    assert code == 1 and not err
+    pkgs = {p["name"]: p for p in json.loads(out)["packages"]}
+    assert pkgs["purewheel"]["results"] == {"linux-x86_64": "missing"}
+    assert pkgs["nowheels"]["results"] == {"linux-x86_64": "missing"}

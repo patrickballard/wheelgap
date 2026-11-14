@@ -109,8 +109,16 @@ def has_sdist(files: list[str]) -> bool:
     return any(f.endswith(SDIST_SUFFIXES) for f in files)
 
 
-def _installable(files: list[str], target: Target) -> bool:
-    return any(target.accepts(t) for t in wheel_tags(files)) or (has_sdist(files) and target.builds_sdists)
+def _installable(
+    files: list[str],
+    target: Target,
+    *,
+    no_binary: bool = False,
+    only_binary: bool = False,
+) -> bool:
+    if not no_binary and any(target.accepts(t) for t in wheel_tags(files)):
+        return True
+    return not only_binary and has_sdist(files) and target.builds_sdists
 
 
 def status_for(
@@ -118,6 +126,9 @@ def status_for(
     target: Target,
     _wheels: list[frozenset[Tag]] | None = None,
     yanked: frozenset[str] = frozenset(),
+    *,
+    no_binary: bool = False,
+    only_binary: bool = False,
 ) -> Status:
     if files is None:
         return Status.UNKNOWN
@@ -125,12 +136,14 @@ def status_for(
         # `yanked` is only non-empty for a release pinned with ==. Like pip, ignore its yanked files
         # unless every file this target could use is yanked; then pip installs them anyway (PEP 592).
         live = [f for f in files if f not in yanked]
-        if _installable(live, target):
+        if _installable(live, target, no_binary=no_binary, only_binary=only_binary):
             files = live
         _wheels = None
-    wheels = _wheels if _wheels is not None else wheel_tags(files)
+    wheels = [] if no_binary else (_wheels if _wheels is not None else wheel_tags(files))
     if any(target.accepts(t) for t in wheels):
         return Status.WHEEL
+    if only_binary:
+        return Status.MISSING
     return Status.SOURCE if has_sdist(files) and target.builds_sdists else Status.MISSING
 
 
@@ -255,20 +268,29 @@ def explain(
     target: Target,
     yanked: frozenset[str] = frozenset(),
     requires_python_rejected: dict[str, str] | None = None,
+    *,
+    no_binary: bool = False,
+    only_binary: bool = False,
 ) -> list[tuple[str, str]]:
     """(filename, reason) for every wheel `target` rejects, the closest misses first.
 
     A wheel the target accepts but status_for() leaves out because it's yanked (the release has other files the
-    target can use) is listed with the reason "yanked".
+    target can use) is listed with the reason "yanked", and with `no_binary` an accepted wheel is listed as
+    "ignored (--no-binary)".
     """
-    skips_yanked = bool(yanked) and _installable([f for f in files if f not in yanked], target)
+    skips_yanked = bool(yanked) and _installable(
+        [f for f in files if f not in yanked], target, no_binary=no_binary, only_binary=only_binary
+    )
     out = []
     for f in files:
         if not f.endswith(".whl"):
             continue
         reason = rejection(f, target)
-        if reason is None and skips_yanked and f in yanked:
-            reason = "yanked"
+        if reason is None:
+            if no_binary:
+                reason = "ignored (--no-binary)"
+            elif skips_yanked and f in yanked:
+                reason = "yanked"
         if reason:
             out.append((f, reason))
     if requires_python_rejected:
@@ -291,6 +313,8 @@ def explain_lines(
     limit: int | None = None,
     dim: Callable[[str], str] = lambda text: text,
     align: bool = False,
+    no_binary: bool = False,
+    only_binary: bool = False,
 ) -> list[str]:
     """What --explain says under a gap on `target`: each rejected wheel and why (the closest misses first, at most
     `limit` of them), or that none were published, and a note when the target can't build the sdist there is.
@@ -298,15 +322,18 @@ def explain_lines(
     The command line aligns the reasons in a column, dims them and indents each line; Result.reasons joins them
     unaligned (one space-separated "file  reason" per line) and with no limit.
     """
-    rejected = explain(files, target, yanked, requires_python_rejected)
+    rejected = explain(files, target, yanked, requires_python_rejected, no_binary=no_binary, only_binary=only_binary)
     out = [] if rejected else [dim("no wheels published for this version")]
     shown = rejected[:limit]
     width = max((len(f) for f, _ in shown), default=0) if align else 0
     out += [f"{f.ljust(width)}  {dim(reason)}" for f, reason in shown]
     if len(rejected) > len(shown):
         out.append(dim(f"… and {len(rejected) - len(shown)} more (--json lists them all)"))
-    if not target.builds_sdists and has_sdist(files):
-        out.append(dim(f"there is an sdist, but {target.platform} can't build packages from source"))
+    if has_sdist(files):
+        if not target.builds_sdists:
+            out.append(dim(f"there is an sdist, but {target.platform} can't build packages from source"))
+        elif only_binary:
+            out.append(dim("there is an sdist, but --only-binary forbids building from source"))
     for f, reason in (requires_python_rejected or {}).items():
         if f.endswith(SDIST_SUFFIXES):
             out.append(dim(f"there is an sdist, but it {reason}"))
@@ -720,7 +747,16 @@ def check(sources: list[Source], targets: list[Target]) -> list[Row]:
                 files = None if resolved.error else resolved.files
                 needed = i in installed[t] if installed is not None else applies(pkg, t)
                 row.results[t] = (
-                    status_for(files, t, parsed[id(resolved)], resolved.yanked) if needed else Status.NOT_NEEDED
+                    status_for(
+                        files,
+                        t,
+                        parsed[id(resolved)],
+                        resolved.yanked,
+                        no_binary=resolved.no_binary,
+                        only_binary=resolved.only_binary,
+                    )
+                    if needed
+                    else Status.NOT_NEEDED
                 )
                 if needed and installed is not None:
                     row.via[t] = (
