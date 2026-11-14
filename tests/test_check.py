@@ -340,9 +340,19 @@ def test_python_full_version_and_implementation_version_markers():
     assert _atom(_parse("python_full_version != '3.13.1'")[0], lin313) is None
     assert _atom(_parse("python_full_version in '3.13.1 3.13.2'")[0], lin313) is None
     assert _atom(_parse("implementation_version >= '3.13.2'")[0], lin313) is None
+    assert _atom(_parse("python_full_version != '3.13.0'")[0], lin313) is None
+    assert _atom(_parse("'3.13.2' <= python_full_version")[0], lin313) is None
+    assert _atom(_parse("python_full_version < '3.13.1rc1'")[0], lin313) is None
+    # A patch named however the value writes it: a wildcard, a v prefix, an epoch, another separator
+    assert _atom(_parse("python_full_version == '3.13.1.*'")[0], lin313) is None
+    assert _atom(_parse("python_full_version == 'v3.13.2'")[0], lin313) is None
+    assert _atom(_parse("python_full_version == '0!3.13.2'")[0], lin313) is None
+    assert _atom(_parse("python_full_version in '3.13.1;3.13.2'")[0], lin313) is None
 
     # Comparisons that agree across every X.Y.* patch release still decide True/False.
     assert _atom(_parse("python_full_version >= '3.13.0'")[0], lin313) is True
+    assert _atom(_parse("python_full_version >= '3.13.0rc1'")[0], lin313) is True
+    assert _atom(_parse("python_full_version == '3.14.1.*'")[0], lin313) is False
     assert _atom(_parse("python_full_version == '3.13.*'")[0], lin313) is True
     assert _atom(_parse("python_full_version < '3.14.0'")[0], lin313) is True
     assert _atom(_parse("python_full_version < '3.13.0'")[0], lin313) is False

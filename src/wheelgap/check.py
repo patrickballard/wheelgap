@@ -311,6 +311,7 @@ _marker_cache: dict[str, Marker | None] = {}
 # platform_machine on 32-bit x86 and Arm, where it depends on the machine rather than the Python.
 _UNKNOWABLE = frozenset({"extra", "extras", "dependency_groups", "platform_release", "platform_version"})
 _FULL_VERSION_MARKERS = frozenset({"python_full_version", "implementation_version"})
+_RELEASE = re.compile(r"\d+(?:\.\d+)+")
 _atom_cache: dict[tuple[str, Target], bool | None] = {}
 
 
@@ -335,18 +336,15 @@ def _evaluate_atom(
         if not full_names:
             return evaluate(base_env)
         prefix = f"{target.major}.{target.minor}."
-        floor = Version(f"{prefix}0")
         probes = [f"{prefix}0", f"{prefix}999999"]
+        # Also every X.Y.Z the value names, however it's written ('3.13.1.*', 'v3.13.2', '3.13.1;3.13.2'): == and
+        # in can hold at exactly one patch release.
         for item in node:
             if isinstance(item, _Value):
-                for tok in item.value.replace(",", " ").split():
-                    if tok.startswith(prefix) and "*" not in tok:
-                        try:
-                            parsed = Version(tok)
-                        except InvalidVersion:
-                            continue
-                        if not parsed.is_prerelease and parsed >= floor:
-                            probes.append(tok)
+                for found in _RELEASE.findall(item.value):
+                    release = Version(found).release
+                    if release[:2] == (target.major, target.minor) and len(release) >= 3:
+                        probes.append(".".join(map(str, release[:3])))
         outcomes = {evaluate({**base_env, **{name: patch for name in full_names}}) for patch in probes}
         return outcomes.pop() if len(outcomes) == 1 else None
     except Exception:  # undefined names, odd comparisons: unknown rather than a confident answer
