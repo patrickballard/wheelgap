@@ -191,8 +191,12 @@ wheelgap:
 `rules: changes` runs the job only when the lockfile or `pyproject.toml` (where `[tool.wheelgap]` lives) changed: in
 a merge request pipeline, compared with the target branch, and in a branch pipeline, compared with the previous push.
 GitLab treats every file as changed in pipelines with nothing to compare against, such as a new branch's first push,
-a scheduled pipeline or one started by hand, so the job runs there too. Drop `rules` to check on every pipeline, which
-also catches a release that dropped a wheel without any change on your side.
+a tag, a scheduled pipeline or one started by hand, so the job runs there too. A
+[scheduled pipeline](https://docs.gitlab.com/ci/pipelines/schedules/) therefore also catches a release that dropped a
+wheel without any change on your side (or drop `rules` to check on every pipeline). Without
+[`workflow: rules`](https://docs.gitlab.com/ci/yaml/workflow/), a push to a branch with an open merge request can
+start both a branch and a merge request pipeline, each running the job; see
+[avoid duplicate pipelines](https://docs.gitlab.com/ci/jobs/job_rules/#avoid-duplicate-pipelines).
 
 `when: always` keeps the report when the job fails, which is when you want it. See [JUnit XML](output.md#junit-xml)
 for how cells map to test results.
