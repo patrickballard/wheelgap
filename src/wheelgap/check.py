@@ -13,7 +13,7 @@ from packaging.markers import InvalidMarker, Marker
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.tags import Tag
 from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
-from packaging.version import InvalidVersion
+from packaging.version import InvalidVersion, Version
 
 try:  # packaging's parsed-marker node types (private, so guarded: without them every comparison is unknown)
     from packaging._parser import Value as _Value
@@ -310,6 +310,7 @@ _marker_cache: dict[str, Marker | None] = {}
 # false on macOS (so it doesn't). Only a definite False hides a package. Target.unknown_markers adds
 # platform_machine on 32-bit x86 and Arm, where it depends on the machine rather than the Python.
 _UNKNOWABLE = frozenset({"extra", "extras", "dependency_groups", "platform_release", "platform_version"})
+_FULL_VERSION_MARKERS = frozenset({"python_full_version", "implementation_version"})
 _atom_cache: dict[tuple[str, Target], bool | None] = {}
 
 
@@ -317,6 +318,39 @@ def _quote(text: str) -> str | None:
     if '"' not in text:
         return f'"{text}"'
     return f"'{text}'" if "'" not in text else None  # both kinds of quote: can't re-serialise safely
+
+
+def _evaluate_atom(
+    text: str,
+    node: tuple,
+    target: Target,
+    base_env: dict,
+    full_names: frozenset[str],
+    *,
+    lock_file: bool,
+) -> bool | None:
+    try:
+        marker = Marker(text)
+        evaluate = (lambda env: marker.evaluate(env, context="lock_file")) if lock_file else marker.evaluate
+        if not full_names:
+            return evaluate(base_env)
+        prefix = f"{target.major}.{target.minor}."
+        floor = Version(f"{prefix}0")
+        probes = [f"{prefix}0", f"{prefix}999999"]
+        for item in node:
+            if isinstance(item, _Value):
+                for tok in item.value.replace(",", " ").split():
+                    if tok.startswith(prefix) and "*" not in tok:
+                        try:
+                            parsed = Version(tok)
+                        except InvalidVersion:
+                            continue
+                        if not parsed.is_prerelease and parsed >= floor:
+                            probes.append(tok)
+        outcomes = {evaluate({**base_env, **{name: patch for name in full_names}}) for patch in probes}
+        return outcomes.pop() if len(outcomes) == 1 else None
+    except Exception:  # undefined names, odd comparisons: unknown rather than a confident answer
+        return None
 
 
 def _atom(
@@ -344,17 +378,26 @@ def _atom(
     if target is None or not names or names & ((_UNKNOWABLE - (environment or {}).keys()) | target.unknown_markers):
         return None
     text = " ".join(parts)
+    full_names = (_FULL_VERSION_MARKERS & names) - (environment or {}).keys()
     if environment is not None:
-        try:
-            return Marker(text).evaluate({**target.marker_env, **environment}, context="lock_file")
-        except Exception:
-            return None
+        return _evaluate_atom(
+            text,
+            node,
+            target,
+            {**target.marker_env, **environment},
+            full_names,
+            lock_file=True,
+        )
     key = (text, target)
     if key not in _atom_cache:
-        try:
-            _atom_cache[key] = Marker(text).evaluate(target.marker_env)
-        except Exception:  # undefined names, odd comparisons: unknown rather than a confident answer
-            _atom_cache[key] = None
+        _atom_cache[key] = _evaluate_atom(
+            text,
+            node,
+            target,
+            target.marker_env,
+            full_names,
+            lock_file=False,
+        )
     return _atom_cache[key]
 
 

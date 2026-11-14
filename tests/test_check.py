@@ -323,3 +323,36 @@ def test_mobile_explain_reasons_and_sdists():
     )
     # Mobile installs can't build sdists, so an sdist alone is "can't install", not "from source".
     assert status_for(["x-1.0.tar.gz"], ios) is Status.MISSING
+
+
+def test_python_full_version_and_implementation_version_markers():
+    from packaging._parser import parse_marker as _parse
+
+    from wheelgap.check import _atom
+
+    (lin313,) = build_targets(["3.13"], ["linux-x86_64"])
+    (win313,) = build_targets(["3.13"], ["win-x86_64"])
+
+    # Patch-dependent comparisons on the target minor version are unknown (never hide).
+    assert _atom(_parse("python_full_version >= '3.13.2'")[0], lin313) is None
+    assert _atom(_parse("python_full_version > '3.13.0'")[0], lin313) is None
+    assert _atom(_parse("python_full_version == '3.13.1'")[0], lin313) is None
+    assert _atom(_parse("python_full_version != '3.13.1'")[0], lin313) is None
+    assert _atom(_parse("python_full_version in '3.13.1 3.13.2'")[0], lin313) is None
+    assert _atom(_parse("implementation_version >= '3.13.2'")[0], lin313) is None
+
+    # Comparisons that agree across every X.Y.* patch release still decide True/False.
+    assert _atom(_parse("python_full_version >= '3.13.0'")[0], lin313) is True
+    assert _atom(_parse("python_full_version == '3.13.*'")[0], lin313) is True
+    assert _atom(_parse("python_full_version < '3.14.0'")[0], lin313) is True
+    assert _atom(_parse("python_full_version < '3.13.0'")[0], lin313) is False
+    assert _atom(_parse("python_full_version >= '3.14.0'")[0], lin313) is False
+    assert _atom(_parse("python_full_version == '3.14.1'")[0], lin313) is False
+    assert _atom(_parse("implementation_version < '3.13.0'")[0], lin313) is False
+
+    # Three-valued logic keeps unknown patch-gated packages reachable unless another term is False.
+    assert marker_holds("python_full_version >= '3.13.2'", lin313)
+    assert marker_holds("python_full_version >= '3.13.2' and sys_platform == 'win32'", win313)
+    assert not marker_holds("python_full_version >= '3.13.2' and sys_platform == 'win32'", lin313)
+    assert marker_holds("extra == 'api' and python_full_version >= '3.13.2'", lin313, extras=frozenset({"api"}))
+    assert not marker_holds("extra == 'api' and python_full_version >= '3.13.2'", lin313, extras=frozenset({"other"}))
