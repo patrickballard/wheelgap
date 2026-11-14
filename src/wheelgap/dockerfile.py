@@ -18,6 +18,13 @@ UNTAGGED_DEBIAN = {"3.6": "bullseye", "3.7": "bookworm", "3.8": "bookworm"} | {f
 # A patch or pre-release tag (python:3.12.7-slim) stops being rebuilt once the next one ships, so it can still be on
 # an older release than its X.Y tag (3.12.7-slim is bookworm): those keep the --glibc default.
 _MINOR_TAG_RE = re.compile(r"^\d+\.\d+(?:-|$)", re.ASCII)
+# The Debian release each X.Y-rc tag that stopped being rebuilt at X.Y's release is on (python:3.11-rc-slim is
+# bullseye), from Docker Hub on 2026-11-14: each -rc-slim digest matches its -rc-slim-<release> one. Older -rc tags are
+# on releases with no glibc here (3.9-rc is buster), and a still-built one (3.16-rc) keeps the --glibc default.
+RC_DEBIAN = {"3.10": "bullseye", "3.11": "bullseye", "3.12": "bookworm", "3.13": "bookworm"} | {
+    "3.14": "trixie",
+    "3.15": "trixie",
+}
 _ALPINE_RE = re.compile(r"^alpine(\d+)\.(\d+)", re.ASCII)
 # docker --platform -> wheelgap arch
 ARCHES = {
@@ -702,7 +709,9 @@ def parse_image(image: str, platform: str | None = None) -> ImageTarget:
     python = f"{m.group(1)}.{m.group(2)}"
     # An X.Y-rc tag stops being rebuilt once X.Y is released, so like a patch tag it can be on an older Debian than
     # its X.Y tag (see _MINOR_TAG_RE).
-    minor_tag = bool(_MINOR_TAG_RE.match(tag)) and not m.group(3)
+    rc = bool(m.group(3))
+    minor_tag = bool(_MINOR_TAG_RE.match(tag)) and not rc
+    rc_release = False  # the Debian release came from RC_DEBIAN, whose images kept every arch they were built for
     variant = m.group(4).split("-") if m.group(4) else []  # Docker Hub tags are case-sensitive: -SLIM doesn't exist
 
     release = None
@@ -722,6 +731,13 @@ def parse_image(image: str, platform: str | None = None) -> ImageTarget:
         release = next((part for part in variant if part in DEBIAN_GLIBC), None)
         if release is None and name in IMAGE_NAMES and minor_tag:
             release = UNTAGGED_DEBIAN.get(python)
+        elif release is None and name in IMAGE_NAMES and rc:
+            if python in RC_DEBIAN:
+                release, rc_release = RC_DEBIAN[python], True
+            elif (int(m.group(1)), int(m.group(2))) < (3, 10):
+                raise DockerfileError(
+                    f"{image} is on a Debian release older than bullseye: pass -t and --glibc instead"
+                )
         glibc = DEBIAN_GLIBC.get(release) if release else None
 
     arch = "x86_64"
@@ -733,7 +749,7 @@ def parse_image(image: str, platform: str | None = None) -> ImageTarget:
             raise DockerfileError(f"{image}: Astral's uv images are only published for linux/amd64 and linux/arm64")
         if name in IMAGE_NAMES and release in DEBIAN_ARCHES:
             # An X.Y-rc tag may be live or long stale, so it gets only the arches both kinds are published for.
-            frozen = not _MINOR_TAG_RE.match(tag) or (python, release) in OLD_DEBIAN_TAGS
+            frozen = not _MINOR_TAG_RE.match(tag) or (python, release) in OLD_DEBIAN_TAGS or rc_release
             if arch not in (OLD_DEBIAN_ARCHES if frozen else DEBIAN_ARCHES[release]):
                 if UNTAGGED_DEBIAN.get(python) == "trixie":
                     hint = f" ({python}-trixie is)"  # the X.Y tag: a patch tag has no trixie twin
@@ -741,10 +757,9 @@ def parse_image(image: str, platform: str | None = None) -> ImageTarget:
                     hint = f" ({python}-bookworm is)"
                 else:
                     hint = ""
-                if m.group(3) and arch in OLD_DEBIAN_ARCHES:  # 3.14-rc-bookworm has s390x, 3.15-rc-bookworm doesn't
+                if rc and arch in OLD_DEBIAN_ARCHES:  # 3.14-rc-bookworm has s390x, 3.15-rc-bookworm doesn't
                     raise DockerfileError(
-                        f"{image} may not be published for {platform}: an -rc tag that stopped being rebuilt early "
-                        f"still has it, a newer one doesn't{hint}"
+                        f"{image} may not be published for {platform}: older -rc builds have it, newer ones don't{hint}"
                     )
                 raise DockerfileError(f"{image} isn't published for {platform}{hint}")
     return ImageTarget(python, f"{family}-{arch}", glibc, musl)

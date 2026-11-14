@@ -44,11 +44,16 @@ from wheelgap.dockerfile import (
         ("python:3.12.7-slim", ImageTarget("3.12", "linux-x86_64")),
         ("python:3.13.9", ImageTarget("3.13", "linux-x86_64")),
         ("python:3.13-windowsservercore-ltsc2022", ImageTarget("3.13", "win-amd64")),
-        # The floating X.Y-rc tags read their variant like X.Y tags, but with no Debian release in the tag they fall
-        # back to --glibc: an X.Y-rc tag stops being rebuilt at the release (3.13-rc-slim isn't on trixie)
+        # The floating X.Y-rc tags read their variant like X.Y tags. One with no Debian release in the tag stopped
+        # being rebuilt at X.Y's release, on the Debian of the day (3.11-rc-slim is bullseye, not trixie), so it's
+        # read from RC_DEBIAN; a still-built one (3.16-rc) keeps the --glibc default.
         ("python:3.16-rc", ImageTarget("3.16", "linux-x86_64")),
         ("python:3.16-rc-slim", ImageTarget("3.16", "linux-x86_64")),
-        ("python:3.13-rc-slim", ImageTarget("3.13", "linux-x86_64")),
+        ("python:3.13-rc-slim", ImageTarget("3.13", "linux-x86_64", glibc="2.36")),
+        ("python:3.11-rc-slim", ImageTarget("3.11", "linux-x86_64", glibc="2.31")),
+        ("python:3.10-rc", ImageTarget("3.10", "linux-x86_64", glibc="2.31")),
+        ("python:3.15-rc", ImageTarget("3.15", "linux-x86_64", glibc="2.41")),
+        ("--platform=linux/s390x python:3.11-rc-slim", ImageTarget("3.11", "linux-s390x", glibc="2.31")),
         ("python:3.16-rc-alpine", ImageTarget("3.16", "musl-x86_64", musl="1.2")),
         ("python:3.16-rc-slim-trixie", ImageTarget("3.16", "linux-x86_64", glibc="2.41")),
         ("--platform=linux/arm64 python:3.16-rc-slim-trixie", ImageTarget("3.16", "linux-aarch64", glibc="2.41")),
@@ -103,15 +108,17 @@ def test_parse_from(line, expected):
         ("--platform=linux/s390x ghcr.io/astral-sh/uv:python3.13-bookworm-slim", "only published for linux/amd64"),
         ("python:3.13-slim-buster", "unknown image variant 'buster'"),
         ("python:3.16-rc-nonsense", "unknown image variant 'nonsense'"),
+        ("python:3.9-rc-slim", "older than bullseye: pass -t and --glibc instead"),
+        ("--platform=linux/riscv64 python:3.13-rc-slim", r"isn't published for linux/riscv64 \(3\.13-trixie is\)$"),
         ("python:3.16-rc1", "unknown image variant 'rc1'"),
         # An X.Y-rc tag isn't read as frozen: 3.14-rc-bookworm has s390x but 3.15-rc-bookworm, built later, doesn't
         (
             "--platform=linux/s390x python:3.15-rc-bookworm",
-            r"may not be published for linux/s390x: an -rc tag .* a newer one doesn't \(3\.15-trixie is\)$",
+            r"may not be published for linux/s390x: older -rc builds have it, newer ones don't \(3\.15-trixie is\)$",
         ),
         (
             "--platform=linux/ppc64le python:3.13-rc-slim-bullseye",
-            r"isn't published for linux/ppc64le \(3\.13-trixie is\)$",
+            r"may not be published for linux/ppc64le: .* \(3\.13-trixie is\)$",
         ),
         ("--platform=linux/riscv64 python:3.15-rc-bookworm", r"isn't published for linux/riscv64 \(3\.15-trixie is\)$"),
         ("--platform=linux/riscv64 python:3.13-bookworm", r"python:3\.13-bookworm isn't published for linux/riscv64"),
@@ -181,7 +188,7 @@ def test_cli_flags_beat_dockerfile(capsys, fixtures, tmp_path):
     [
         ("python:3.13-slim", "wheel"),
         ("python:3.13-slim-bookworm", "source"),
-        ("python:3.13-rc-slim", "source"),  # falls back to the --glibc default, 2.36
+        ("python:3.13-rc-slim", "source"),  # bookworm, 2.36
         ("python:3.13-rc-slim-trixie", "wheel"),
     ],
 )
