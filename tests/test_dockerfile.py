@@ -54,6 +54,9 @@ from wheelgap.dockerfile import (
         ("--platform=linux/arm64 python:3.16-rc-slim-trixie", ImageTarget("3.16", "linux-aarch64", glibc="2.41")),
         ("python:3.16-rc-bookworm", ImageTarget("3.16", "linux-x86_64", glibc="2.36")),
         ("--platform=linux/ppc64le python:3.16-rc-bookworm", ImageTarget("3.16", "linux-ppc64le", glibc="2.36")),
+        # Astral published rc tags for 3.14 (uv 0.8's Docker guide lists them); they always name their base
+        ("ghcr.io/astral-sh/uv:python3.14-rc-alpine", ImageTarget("3.14", "musl-x86_64", musl="1.2")),
+        ("ghcr.io/astral-sh/uv:python3.14-rc-bookworm-slim", ImageTarget("3.14", "linux-x86_64", glibc="2.36")),
         ("ghcr.io/astral-sh/uv:python3.13-bookworm-slim", ImageTarget("3.13", "linux-x86_64", glibc="2.36")),
         ("ghcr.io/astral-sh/uv:python3.14-trixie-slim", ImageTarget("3.14", "linux-x86_64", glibc="2.41")),
         ("ghcr.io/astral-sh/uv:0.13.7-python3.13-trixie-slim", ImageTarget("3.13", "linux-x86_64", glibc="2.41")),
@@ -101,7 +104,6 @@ def test_parse_from(line, expected):
         ("python:3.13-slim-buster", "unknown image variant 'buster'"),
         ("python:3.16-rc-nonsense", "unknown image variant 'nonsense'"),
         ("python:3.16-rc1", "unknown image variant 'rc1'"),
-        ("ghcr.io/astral-sh/uv:python3.16-rc-alpine", r"must specify a Python version like python3\.13-alpine"),
         # An X.Y-rc tag isn't read as frozen: a live one (3.16-rc-bookworm) has only the arches bookworm has today
         ("--platform=linux/s390x python:3.16-rc-bookworm", "isn't published for linux/s390x$"),
         (

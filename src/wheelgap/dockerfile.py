@@ -58,7 +58,8 @@ OLD_DEBIAN_TAGS = {
 }
 
 # X.Y, X.Y.Z or a pre-release (3.15.0a1, 3.13rc1), then the variant; or the official images' floating X.Y-rc tags
-# (python:3.16-rc, 3.16-rc-slim-trixie), which follow the newest pre-release of X.Y.
+# (python:3.16-rc, 3.16-rc-slim-trixie), which follow the newest pre-release of X.Y. Astral's uv images have had
+# them too (uv:python3.14-rc-alpine, python3.14-rc-bookworm-slim).
 _TAG_RE = re.compile(r"^(\d+)\.(\d+)(?:(-rc)(?=-|$)|(?:\.\d+)?(?:(?:a|b|rc)\d+)?)(?:-(.+))?$", re.ASCII)
 _UV_TAG_PREFIX_RE = re.compile(r"^(?:\d+\.\d+(?:\.\d+)?-)?python", re.ASCII)
 _DOCKER_TAG_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")  # distribution/reference's tag grammar
@@ -698,8 +699,6 @@ def parse_image(image: str, platform: str | None = None) -> ImageTarget:
         if name == UV_IMAGE:
             raise DockerfileError(f"{image}: the tag must specify a Python version like python3.13-alpine")
         raise DockerfileError(f"{image}: the tag must start with a Python version like 3.13")
-    if m.group(3) and name == UV_IMAGE:  # only the official images publish X.Y-rc tags
-        raise DockerfileError(f"{image}: the tag must specify a Python version like python3.13-alpine")
     python = f"{m.group(1)}.{m.group(2)}"
     # An X.Y-rc tag stops being rebuilt once X.Y is released, so like a patch tag it can be on an older Debian than
     # its X.Y tag (see _MINOR_TAG_RE).
