@@ -10,6 +10,7 @@ import threading
 import urllib.error
 from collections.abc import Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 
 from packaging.tags import Tag
 from packaging.version import InvalidVersion, Version
@@ -72,32 +73,48 @@ def nearest_with_wheel(releases: dict, pinned: str, target: Target) -> str | Non
     return next((text for text in _candidates(releases, pinned) if _has_wheel(releases, text, target, seen)), None)
 
 
-def suggest(releases: dict, pinned: str, targets: Iterable[Target]) -> dict[Target, str]:
-    """For a release `pinned` with gaps on `targets`: a target with no newer release with a wheel is left out, and the
-    others all get the lowest newer release with a wheel for every one of them; when no release has one for all of
-    them, each gets its own nearest (as nearest_with_wheel picks it). Keys keep the order of `targets`."""
-    targets = list(targets)
+@dataclass(frozen=True)
+class Suggestion:
+    found: dict[Target, str]  # gap target -> the release named for it
+    loses: tuple[Target, ...] = ()  # gap targets where every newer release with a wheel drops one the row has
+
+
+def suggest(releases: dict, pinned: str, targets: Iterable[Target], keep: Iterable[Target] = ()) -> Suggestion:
+    """For a release `pinned` with gaps on `targets` and a wheel on `keep`: only releases that keep a wheel on every
+    target of `keep` count. A gap target that no such release has a wheel for is left out (in `loses` when some other
+    newer release has one), and the others all get the lowest such release with a wheel for every one of them; when
+    there is none, each gets its own nearest. Keys keep the order of `targets`."""
+    targets, keep = list(targets), list(keep)
     candidates = _candidates(releases, pinned)
     seen: _Seen = {}
+    kept: dict[str, bool] = {}
+
+    def keeps(v: str) -> bool:
+        if v not in kept:
+            kept[v] = all(_has_wheel(releases, v, k, seen) for k in keep)
+        return kept[v]
+
     nearest: dict[Target, int] = {}
+    loses = []
     for t in targets:
-        if (i := next((i for i, v in enumerate(candidates) if _has_wheel(releases, v, t, seen)), None)) is not None:
+        with_wheel = [i for i, v in enumerate(candidates) if _has_wheel(releases, v, t, seen)]
+        if (i := next((i for i in with_wheel if keeps(candidates[i])), None)) is not None:
             nearest[t] = i
+        elif with_wheel:
+            loses.append(t)
     if nearest:
         # A release with a wheel for every target that has one at all is no lower than the highest of the nearest.
         for v in candidates[max(nearest.values()) :]:
-            if all(_has_wheel(releases, v, t, seen) for t in nearest):
-                return dict.fromkeys(nearest, v)
-    return {t: candidates[i] for t, i in nearest.items()}
+            if keeps(v) and all(_has_wheel(releases, v, t, seen) for t in nearest):
+                return Suggestion(dict.fromkeys(nearest, v), tuple(loses))
+    return Suggestion({t: candidates[i] for t, i in nearest.items()}, tuple(loses))
 
 
-Wanted = dict[str, Sequence[tuple[str, Sequence[Target]]]]
-"""By canonical name: the (pinned version, gap targets) of each row of that package to suggest for."""
+Wanted = dict[str, Sequence[tuple[str, Sequence[Target], Sequence[Target]]]]
+"""By canonical name: the (pinned version, gap targets, targets with a wheel) of each row of that package."""
 
 
-def look_up_all(
-    wanted: Wanted, deadline: float = DEADLINE
-) -> tuple[dict[str, list[dict[Target, str]]], dict[str, str]]:
+def look_up_all(wanted: Wanted, deadline: float = DEADLINE) -> tuple[dict[str, list[Suggestion]], dict[str, str]]:
     """Fetch each package's releases once, at most WORKERS at a time and `deadline` seconds in all, and suggest for each
     of its rows (in the order given). Returns the suggestions by name, and why the others got none, by name. The first
     failure to reach the index drops the lookups still to come, and so does the deadline. Each project page is
@@ -105,7 +122,7 @@ def look_up_all(
     end = pypi._clock() + deadline
     stop = threading.Event()
 
-    def one(key: str) -> list[dict[Target, str]] | str:
+    def one(key: str) -> list[Suggestion] | str:
         left = end - pypi._clock()
         if stop.is_set() or left <= 0:
             return DROPPED
@@ -121,7 +138,7 @@ def look_up_all(
         except Exception:  # a slow or cut-off answer (TimeoutError, a reset), a damaged body, bad JSON, no releases
             return FAILED
         try:
-            return [suggest(releases, pinned, targets) for pinned, targets in wanted[key]]
+            return [suggest(releases, pinned, gaps, keep) for pinned, gaps, keep in wanted[key]]
         except InvalidVersion:
             return "a checked version isn't a valid version"
 
@@ -132,11 +149,11 @@ def look_up_all(
     return found, failed
 
 
-def suggest_lines(
-    name: str, pinned: str, gaps: Sequence[Target], found: dict[Target, str], multi_py: bool
-) -> list[str]:
+def suggest_lines(name: str, pinned: str, gaps: Sequence[Target], suggestion: Suggestion, multi_py: bool) -> list[str]:
     """`foo 1.2.0 -> 1.4.0 has wheels for musl-aarch64, win-amd64`, one line per suggested version (lowest first),
-    then `foo 1.2.0: no newer release has a wheel for linux-riscv64` for the gap targets with none."""
+    then `foo 1.2.0: no newer release has a wheel for linux-riscv64` for the gap targets with none, and
+    `... for win-arm64 without losing one elsewhere` for those whose every newer release with a wheel drops another."""
+    found, loses = suggestion.found, set(suggestion.loses)
     by_version: dict[str, list[str]] = {}
     for t in gaps:
         if t in found:
@@ -145,6 +162,8 @@ def suggest_lines(
         f"{name} {pinned} -> {v} has wheels for {', '.join(labels)}"
         for v, labels in sorted(by_version.items(), key=lambda item: Version(item[0]))
     ]
-    if none := [t.label(multi_py) for t in gaps if t not in found]:
+    if none := [t.label(multi_py) for t in gaps if t not in found and t not in loses]:
         out.append(f"{name} {pinned}: no newer release has a wheel for {', '.join(none)}")
+    if lost := [t.label(multi_py) for t in gaps if t in loses]:
+        out.append(f"{name} {pinned}: no newer release has a wheel for {', '.join(lost)} without losing one elsewhere")
     return out

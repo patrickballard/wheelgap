@@ -21,7 +21,7 @@ from packaging.utils import canonicalize_name
 
 from . import __version__, cache, condaforge, origin
 from . import notes as tracker
-from . import suggest as releases
+from . import suggest as release_suggest
 from .api import running_python
 from .build import BuildInfo, describe, lookup_all, requires_for, shown
 from .check import CELL, EXPLAIN_LIMIT, Row, Status, check, explain, explain_lines, marker_holds, reachable
@@ -50,9 +50,9 @@ from .sources import (
     select_uv_dependencies,
     uv_selected_roots,
 )
-from .suggest_targets import render_text as render_suggestions
-from .suggest_targets import suggest
-from .suggest_targets import to_json as suggestions_json
+from .suggest_targets import render_text as render_target_suggestions
+from .suggest_targets import suggest as suggest_targets
+from .suggest_targets import to_json as target_suggestions_json
 from .targets import (
     ALIASES,
     DEFAULT_ANDROID_API,
@@ -588,9 +588,9 @@ def gap_targets(row: Row, targets: list[Target]) -> list[Target]:
 
 RowNotes = dict[int, list[tuple[tracker.Note, list[Target]]]]
 """The tracker's notes that apply to a row's gaps, keyed by id(row), each with the gap targets it covers."""
-Suggestions = dict[int, dict[Target, str]]
-"""--suggest: by id() of a gap row's package that was looked up, the release it names for each gap target (those with
-a newer release with a wheel)."""
+Suggestions = dict[int, release_suggest.Suggestion]
+"""--suggest: by id() of a gap row's package that was looked up, the release it names for each gap target that has
+one (see release_suggest.suggest)."""
 
 
 def notes_eligible(
@@ -691,7 +691,7 @@ def render_explain(
             out.append("")
         if suggestions is not None and (found := suggestions.get(id(r.package))) is not None:
             gaps = gap_targets(r, targets)
-            out += [*releases.suggest_lines(r.package.name, r.package.version or "?", gaps, found, multi_py), ""]
+            out += [*release_suggest.suggest_lines(r.package.name, r.package.version or "?", gaps, found, multi_py), ""]
     return out
 
 
@@ -829,7 +829,9 @@ def report_json(
                 out["build_requires"] = [shown(q) for q in requires_for(info, sources)] if info and sources else None
             if suggestions is not None and (found := suggestions.get(id(r.package))) is not None:
                 # --suggest: by gap target, the release it names; a target with no newer wheel is left out.
-                out["suggest"] = {t.label(multi_py): found[t] for t in gap_targets(r, targets) if t in found}
+                out["suggest"] = {
+                    t.label(multi_py): found.found[t] for t in gap_targets(r, targets) if t in found.found
+                }
         return out
 
     report: dict[str, object] = {
@@ -1282,8 +1284,15 @@ def version_suggestions(
             f"whose index isn't known to be PyPI ({_names(private)}), so their names stay private",
             file=sys.stderr,
         )
-    found, failed = releases.look_up_all(
-        {key: [(r.package.version or "", gap_targets(r, targets)) for r in rows] for key, rows in asked.items()}
+    # A suggestion must keep a wheel on every target where this row (this resolution, on its Pythons) has one now.
+    found, failed = release_suggest.look_up_all(
+        {
+            key: [
+                (r.package.version or "", gap_targets(r, targets), [t for t in targets if r.results[t] is Status.WHEEL])
+                for r in rows
+            ]
+            for key, rows in asked.items()
+        }
     )
     if failed and not quiet:
         n = len(failed)
@@ -1362,14 +1371,14 @@ def _main(argv: list[str]) -> int:
         if given:
             parser.error(f"--suggest-targets only suggests, so it can't be used with {', '.join(given)}")
         try:
-            found = suggest(Path(args.suggest_targets))
+            found = suggest_targets(Path(args.suggest_targets))
         except OSError as e:
             print(f"wheelgap: error: {e}", file=sys.stderr)
             return input_error_json(e) if args.json else 2
         if args.json:
-            print(json.dumps(suggestions_json(found), indent=2))
+            print(json.dumps(target_suggestions_json(found), indent=2))
         else:
-            print("\n".join(render_suggestions(found)))
+            print("\n".join(render_target_suggestions(found)))
         return 0
     if args.conda_forge and not args.explain:
         parser.error("--conda-forge only adds to --explain; pass --explain too")

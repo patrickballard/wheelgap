@@ -70,6 +70,20 @@ FAKE_INDEX = {
         # Last, so it's the "latest" an unpinned lookup gets: PyPI's latest is never a pre-release.
         "1.4": [{"filename": "laggard-1.4-py3-none-any.whl", "yanked": True}, "laggard-1.4.tar.gz"],
     },
+    # --suggest must not name a release that drops a wheel the checked one has: 1.1 has Windows's but not Linux's.
+    "wheeldrop": {
+        "1.0": ["wheeldrop-1.0-cp313-cp313-manylinux_2_17_x86_64.whl", "wheeldrop-1.0.tar.gz"],
+        "1.1": ["wheeldrop-1.1-cp313-cp313-win_amd64.whl", "wheeldrop-1.1.tar.gz"],
+        "1.2": [
+            "wheeldrop-1.2-cp313-cp313-manylinux_2_17_x86_64.whl",
+            "wheeldrop-1.2-cp313-cp313-win_amd64.whl",
+            "wheeldrop-1.2.tar.gz",
+        ],
+    },
+    "wheellost": {
+        "1.0": ["wheellost-1.0-cp313-cp313-manylinux_2_17_x86_64.whl", "wheellost-1.0.tar.gz"],
+        "1.1": ["wheellost-1.1-cp313-cp313-win_amd64.whl", "wheellost-1.1.tar.gz"],
+    },
 }
 
 

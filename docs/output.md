@@ -238,11 +238,15 @@ fastlib 2.0.0 -> 2.1.0 has wheels for musl-aarch64, win-amd64
 fastlib 2.0.0: no newer release has a wheel for linux-riscv64
 ```
 
-- **Which release.** Gap targets that no newer release has a wheel for get the "no newer release" line. The others
-  get the lowest newer release with a wheel for every one of them, when there is one; otherwise each its own nearest,
-  one line per release. A wheel counts when it isn't yanked, the target accepts
-  its tags, and its `Requires-Python` admits the target's Python. Pre-releases count only when the checked version is
-  one, and versions that don't parse are skipped.
+- **Which release.** Only a release that keeps a wheel on every target where the checked version has one counts, so a
+  suggestion never trades one gap for another. Gap targets that no such release has a wheel for get a "no newer
+  release" line, ending `without losing one elsewhere` when some newer release has a wheel for it but drops another.
+  The other gap targets get the lowest counted release with a wheel for every one of them, when there is one;
+  otherwise each its own nearest, one line per release. A wheel counts when it isn't yanked, the target accepts its
+  tags, and its `Requires-Python` admits the target's Python. Pre-releases count only when the checked version is one,
+  and versions that don't parse are skipped.
+- **Outside your specifier.** The suggestion looks at every newer release, not only those your input allows: a range
+  or a lock entry (`foo<2` resolving to 1.9) may be told to move to 2.1, so check it against your constraints.
 - **Which packages.** Pinned packages with a gap, a version range's pick included, but not those a requirements
   file's `--no-binary` covers (pip wouldn't use a newer release's wheels either). Each name is looked up once, on
   PyPI's JSON API (`https://pypi.org/pypi/<name>/json`), and only names that pass
@@ -253,11 +257,12 @@ fastlib 2.0.0: no newer release has a wheel for linux-riscv64
   When a lookup fails or is dropped, a note on stderr says no suggestion isn't a "no". Answers aren't cached.
 
 With `--json --explain --suggest`, each package with a gap that was looked up gets a `suggest` object keyed by target
-label like `rejected`: `"suggest": {"musl-aarch64": "2.1.0", "win-amd64": "2.1.0"}`. A target with no newer release
-with a wheel is left out (so the object can be empty), and the key is left out for packages without a gap, packages
-that weren't looked up and failed lookups. Like the other hints, it never changes a status, the summary or the exit
-code. Quiet text output can't show it (quiet can't be combined with `--explain`), and `--markdown --suggest` is an
-error for now.
+label like `rejected`: `"suggest": {"musl-aarch64": "2.1.0", "win-amd64": "2.1.0"}`. A target with no counted release is
+left out (so the object can be empty). The key is left out for a package with no gap, a row with no version, a package a
+requirements file's `--no-binary` covers, a package that wasn't looked up (its index isn't known to be PyPI, or the run
+uses `--index-url` or `WHEELGAP_INDEX_URL`), and a failed or dropped lookup (a note on stderr says so). Like the other
+hints, it never changes a status, the summary or the exit code. Quiet text output can't show it (quiet can't be combined
+with `--explain`), and `--markdown --suggest` is an error for now.
 
 ## --json {#json}
 

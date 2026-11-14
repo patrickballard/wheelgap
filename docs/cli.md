@@ -209,11 +209,12 @@ opt-in, and only for packages that pass [the PyPI-origin rule](how-it-works.md#p
 ### `--suggest` {#suggest}
 
 **After 0.9.0.** With `--explain`, also name the lowest newer release with a wheel for a pinned package's gap targets
-(`fastlib 2.0.0 -> 2.1.0 has wheels for musl-aarch64, win-amd64`), leaving out targets no newer release has a wheel
-for, or each target's nearest when no one release has them all. It looks each package with a gap up on pypi.org once, only for names that pass
-[the PyPI-origin rule](how-it-works.md#pypi-origin), and never changes a status, the summary or the exit code. A run
-with `--index-url` or `WHEELGAP_INDEX_URL` looks nothing up, `--offline` refuses the flag, and it has no Markdown form
-yet. With `--json`, adds `suggest` to each package with a gap. See [Newer releases](output.md#suggest).
+(`fastlib 2.0.0 -> 2.1.0 has wheels for musl-aarch64, win-amd64`) that keeps the wheels the package has on its other
+targets, or each target's nearest when no one release has them all. It looks each package with a gap up on pypi.org
+once, only for names that pass [the PyPI-origin rule](how-it-works.md#pypi-origin), and never changes a status, the
+summary or the exit code. A run with `--index-url` or `WHEELGAP_INDEX_URL` looks nothing up, `--offline` refuses the
+flag, and it has no Markdown form yet. With `--json`, adds `suggest` to each package with a gap. See
+[Newer releases](output.md#suggest).
 
 ### `-q`, `--quiet`, `--no-quiet` {#quiet}
 

@@ -143,16 +143,48 @@ def suggest_json(capsys, *args):
 def test_suggest_picks_one_release_for_every_target_else_the_nearest_each(platforms, expected):
     targets = build_targets(["3.13"], platforms)
     releases = {v: [{"filename": f} if isinstance(f, str) else f for f in fs] for v, fs in LAGGARD.items()}
-    found = suggest.suggest(releases, "1.0", targets)
+    found = suggest.suggest(releases, "1.0", targets).found
     assert {t.platform: v for t, v in found.items()} == expected
     assert list(found) == [t for t in targets if t.platform in expected]  # in the targets' order
 
 
 def test_suggest_keeps_pre_releases_for_a_pre_release_pin():
     targets = build_targets(["3.13"], ["linux-riscv64"])
-    assert suggest.suggest({"2.0rc1": [wheel("2.0rc1")], "2.0rc2": [wheel("2.0rc2")]}, "2.0rc1", targets) == {
+    assert suggest.suggest({"2.0rc1": [wheel("2.0rc1")], "2.0rc2": [wheel("2.0rc2")]}, "2.0rc1", targets).found == {
         targets[0]: "2.0rc2"
     }
+
+
+def test_a_release_must_keep_the_wheels_the_row_has():
+    linux, win = build_targets(["3.13"], ["linux-x86_64", "win-amd64"])
+    linux_wheel, win_wheel = wheel("1.0", "cp313-cp313-manylinux_2_17_x86_64"), wheel("1.0", "cp313-cp313-win_amd64")
+    releases = {"1.1": [win_wheel], "1.2": [linux_wheel, win_wheel]}
+    assert suggest.suggest(releases, "1.0", [win], keep=[linux]) == suggest.Suggestion({win: "1.2"})
+    assert suggest.suggest(releases, "1.0", [win]) == suggest.Suggestion({win: "1.1"})  # nothing to keep
+    # 1.1 has a Windows wheel, but drops Linux's; 1.2 drops Linux's Python.
+    releases = {"1.1": [win_wheel], "1.2": [{**linux_wheel, "requires_python": ">=3.14"}, win_wheel]}
+    assert suggest.suggest(releases, "1.0", [win], keep=[linux]) == suggest.Suggestion({}, (win,))
+    assert suggest.suggest({}, "1.0", [win], keep=[linux]) == suggest.Suggestion({})  # none has a wheel at all
+
+
+def test_a_release_that_drops_a_wheel_is_never_named(capsys, fake_pypi):
+    # wheeldrop 1.0 has a Linux wheel; 1.1 has a Windows one only; 1.2 has both.
+    _, out, _ = run(capsys, "wheeldrop==1.0", "-t", "linux-x86_64,win-amd64", *FLAGS)
+    assert "wheeldrop 1.0 -> 1.2 has wheels for win-amd64\n\n" in out and "-> 1.1" not in out
+    _, found, _ = suggest_json(
+        capsys, "wheeldrop==1.0", "-t", "linux-x86_64,win-amd64", "-p", "3.13", "--explain", "--suggest"
+    )
+    assert found == {("wheeldrop", "1.0"): {"win-amd64": "1.2"}}
+    # wheellost 1.1 has a Windows wheel but none for Linux, and there's nothing newer.
+    _, out, _ = run(capsys, "wheellost==1.0", "-t", "linux-x86_64,win-amd64,linux-riscv64", *FLAGS)
+    assert (
+        "wheellost 1.0: no newer release has a wheel for linux-riscv64\n"
+        "wheellost 1.0: no newer release has a wheel for win-amd64 without losing one elsewhere\n\n"
+    ) in out
+    _, found, _ = suggest_json(
+        capsys, "wheellost==1.0", "-t", "linux-x86_64,win-amd64", "-p", "3.13", "--explain", "--suggest"
+    )
+    assert found == {("wheellost", "1.0"): {}}
 
 
 def test_text_after_the_explain_blocks(capsys, fake_pypi):
@@ -263,20 +295,20 @@ def test_a_connection_failure_stops_the_rest(monkeypatch):
     monkeypatch.setattr(pypi, "fetch_releases", fetch_releases)
     monkeypatch.setattr(suggest, "WORKERS", 1)
     targets = build_targets(["3.13"], ["win-amd64"])
-    found, failed = suggest.look_up_all({"a": [("1.0", targets)], "b": [("1.0", targets)]})
+    found, failed = suggest.look_up_all({"a": [("1.0", targets, [])], "b": [("1.0", targets, [])]})
     assert asked == ["a"] and found == {} and failed == {"a": suggest.DROPPED, "b": suggest.DROPPED}
 
 
 def test_past_the_deadline_nothing_is_asked(monkeypatch):
     monkeypatch.setattr(pypi, "fetch_releases", lambda *a, **k: pytest.fail("asked after the deadline"))
     targets = build_targets(["3.13"], ["win-amd64"])
-    assert suggest.look_up_all({"a": [("1.0", targets)]}, deadline=0) == ({}, {"a": suggest.DROPPED})
+    assert suggest.look_up_all({"a": [("1.0", targets, [])]}, deadline=0) == ({}, {"a": suggest.DROPPED})
 
 
 def test_an_invalid_pin_is_a_failed_lookup(monkeypatch):
     monkeypatch.setattr(pypi, "fetch_releases", lambda *a, **k: {"1.1": [wheel("1.1")]})
     targets = build_targets(["3.13"], ["win-amd64"])
-    found, failed = suggest.look_up_all({"a": [("not-a-version", targets)]})
+    found, failed = suggest.look_up_all({"a": [("not-a-version", targets, [])]})
     assert found == {} and failed == {"a": "a checked version isn't a valid version"}
 
 
