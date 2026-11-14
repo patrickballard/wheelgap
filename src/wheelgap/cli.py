@@ -21,6 +21,7 @@ from packaging.utils import canonicalize_name
 
 from . import __version__, cache, condaforge, origin
 from . import notes as tracker
+from . import suggest as releases
 from .api import running_python
 from .build import BuildInfo, describe, lookup_all, requires_for, shown
 from .check import CELL, EXPLAIN_LIMIT, Row, Status, check, explain, explain_lines, marker_holds, reachable
@@ -231,6 +232,12 @@ def make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="with --explain, also say when conda-forge has a package of the same name with builds for a gap's "
         "platform (sends the names of PyPI packages with gaps to anaconda.org)",
+    )
+    p.add_argument(
+        "--suggest",
+        action="store_true",
+        help="with --explain, also name the nearest newer release with a wheel for each gap's target "
+        "(looks the PyPI packages with gaps up on pypi.org)",
     )
     p.add_argument(
         "--notes",
@@ -581,6 +588,9 @@ def gap_targets(row: Row, targets: list[Target]) -> list[Target]:
 
 RowNotes = dict[int, list[tuple[tracker.Note, list[Target]]]]
 """The tracker's notes that apply to a row's gaps, keyed by id(row), each with the gap targets it covers."""
+Suggestions = dict[int, dict[Target, str]]
+"""--suggest: by id() of a gap row's package that was looked up, the release it names for each gap target (those with
+a newer release with a wheel)."""
 
 
 def notes_eligible(
@@ -633,9 +643,10 @@ def render_explain(
     conda_forge: dict[int, condaforge.Hint] | None = None,
     notes: RowNotes | None = None,
     build_info: dict[int, BuildInfo] | None = None,
+    suggestions: Suggestions | None = None,
 ) -> list[str]:
-    """`conda_forge`: --conda-forge hints and `build_info`: --build-info answers, by id() of the row's package.
-    `notes`: --notes, by id() of the row."""
+    """`conda_forge`: --conda-forge hints, `build_info`: --build-info answers and `suggestions`: --suggest's, by id()
+    of the row's package. `notes`: --notes, by id() of the row."""
     multi_py = len({t.python for t in targets}) > 1
     out = []
     for r in rows:
@@ -678,6 +689,9 @@ def render_explain(
             out.append(f"  - {note.text}")
             out += [f"    {link}" for link in note.links]
             out.append("")
+        if suggestions is not None and (found := suggestions.get(id(r.package))) is not None:
+            gaps = gap_targets(r, targets)
+            out += [*releases.suggest_lines(r.package.name, r.package.version or "?", gaps, found, multi_py), ""]
     return out
 
 
@@ -766,6 +780,7 @@ def report_json(
     conda_forge: dict[int, condaforge.Hint] | None = None,
     notes: RowNotes | None = None,
     build_info: dict[int, BuildInfo] | None = None,
+    suggestions: Suggestions | None = None,
 ) -> str:
     multi_py = len({t.python for t in targets}) > 1
     gaps = [r for r in rows if not r.ok]
@@ -812,6 +827,9 @@ def report_json(
             if build_info is not None:  # --build-info: what the sdist requires, on the targets that build it
                 info, sources = build_info.get(id(r.package)), source_targets(r, targets)
                 out["build_requires"] = [shown(q) for q in requires_for(info, sources)] if info and sources else None
+            if suggestions is not None and (found := suggestions.get(id(r.package))) is not None:
+                # --suggest: by gap target, the release it names; a target with no newer wheel is left out.
+                out["suggest"] = {t.label(multi_py): found[t] for t in gap_targets(r, targets) if t in found}
         return out
 
     report: dict[str, object] = {
@@ -1232,6 +1250,54 @@ def conda_forge_hints(
     return hints
 
 
+def version_suggestions(
+    gaps: list[Row], targets: list[Target], sources: list[Source], index_url: str | None, quiet: bool
+) -> Suggestions:
+    """--suggest: look the pinned gap packages' releases up on PyPI, one request per name, and return what to move to,
+    by id() of the package. Only names that are positively PyPI's are looked up, by the rule --conda-forge follows
+    (origin.known_pypi), and nothing in a run that uses another index; notes on stderr say which weren't, and why."""
+    other = origin.other_index(index_url)
+    if other is not None:
+        if not quiet:
+            print(
+                f"wheelgap: note: --suggest looks nothing up when packages come from another index ({other})",
+                file=sys.stderr,
+            )
+        return {}
+    elsewhere = origin.private_names(sources, simple_index=index_url)
+    source_of = {id(p): s for s in sources for original in s.packages for p in original.variants}
+    asked: dict[str, list[Row]] = {}  # by canonical name: one lookup per package, however many rows it has
+    kept_in: dict[str, str] = {}
+    for r in gaps:
+        # Under --no-binary, pip uses no release's wheels, so a newer one with wheels wouldn't close the gap.
+        if r.package.version and not r.package.no_binary and gap_targets(r, targets):
+            if origin.known_pypi(r.package, source_of[id(r.package)], simple_index=index_url, private=elsewhere):
+                asked.setdefault(r.package.key, []).append(r)
+            else:
+                kept_in.setdefault(r.package.key, r.package.name)
+    if kept_in and not quiet:
+        private = list(kept_in.values())
+        print(
+            f"wheelgap: note: --suggest didn't look up {len(private)} package{'s' * (len(private) != 1)} "
+            f"whose index isn't known to be PyPI ({_names(private)}), so their names stay private",
+            file=sys.stderr,
+        )
+    found, failed = releases.look_up_all(
+        {key: [(r.package.version or "", gap_targets(r, targets)) for r in rows] for key, rows in asked.items()}
+    )
+    if failed and not quiet:
+        n = len(failed)
+        which = _names([f"{asked[key][0].package.name} ({why})" for key, why in failed.items()])
+        print(
+            f"wheelgap: note: --suggest couldn't look up {n} package{'s' * (n != 1)}: {which}; "
+            "no suggestion doesn't mean no newer release has wheels",
+            file=sys.stderr,
+        )
+    return {
+        id(r.package): s for key, rows in asked.items() if key in found for r, s in zip(rows, found[key], strict=True)
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         # Don't crash printing ✓ to a non-UTF-8 pipe (e.g. Windows cp1252).
@@ -1307,6 +1373,10 @@ def _main(argv: list[str]) -> int:
         return 0
     if args.conda_forge and not args.explain:
         parser.error("--conda-forge only adds to --explain; pass --explain too")
+    if args.suggest and not args.explain:
+        parser.error("--suggest only adds to --explain; pass --explain too")
+    if args.suggest and args.markdown:
+        parser.error("--suggest has no Markdown form yet (use --json, or the text output)")
     if args.notes and not args.explain:
         parser.error("--notes only adds to --explain; pass --explain too")
     try:
@@ -1459,6 +1529,11 @@ def _main(argv: list[str]) -> int:
                 raise SourceError(
                     f"{offline_how}: --conda-forge would look packages up on anaconda.org; "
                     f"drop --conda-forge, or {undo_offline(offline_how)}"
+                )
+            if args.suggest:
+                raise SourceError(
+                    f"{offline_how}: --suggest would look packages up on PyPI; "
+                    f"drop --suggest, or {undo_offline(offline_how)}"
                 )
         fail_on = args.fail_on or config.get("fail-on", "source")
         pyodide_lock = None
@@ -1653,6 +1728,8 @@ def _main(argv: list[str]) -> int:
                 file=sys.stderr,
             )
     conda_forge = conda_forge_hints(gaps, targets, sources, index_url, quiet, cached) if args.conda_forge else {}
+    # None: not asked for. Like the hints above, it never changes a status or the exit code.
+    suggestions = version_suggestions(gaps, targets, sources, index_url, quiet) if args.suggest else None
     # With --fail-on missing, source builds are accepted; missing and unknown packages still fail. Gaps on
     # --advisory targets never fail the run.
     fail_statuses = GAP_STATUSES if fail_on == "source" else (Status.MISSING, Status.UNKNOWN)
@@ -1705,6 +1782,7 @@ def _main(argv: list[str]) -> int:
                 conda_forge,
                 row_notes,
                 build_info,
+                suggestions,
             )
         )
         return code
@@ -1770,7 +1848,7 @@ def _main(argv: list[str]) -> int:
         if args.explain and gaps:
             if hidden:
                 print()
-            for ln in render_explain(gaps, targets, style, conda_forge, row_notes, build_info):
+            for ln in render_explain(gaps, targets, style, conda_forge, row_notes, build_info, suggestions):
                 print(ln)
 
     bundled = [r for r in rows if Status.BUNDLED in r.results.values()]

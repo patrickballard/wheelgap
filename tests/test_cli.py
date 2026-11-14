@@ -2152,6 +2152,7 @@ def _assert_matches_output_schema(data):
             "bundled",
             "bundled_version_differs",
             "conda_forge",
+            "suggest",
         }
         assert isinstance(pkg["name"], str) and pkg["name"]
         assert pkg["version"] is None or isinstance(pkg["version"], str)
@@ -2179,6 +2180,10 @@ def _assert_matches_output_schema(data):
             assert all(pkg["conda_forge"]["builds"].values())
         for note in pkg.get("notes", []):
             assert set(note["targets"]) <= set(pkg.get("rejected", {})), "notes cover gap targets only"
+        if "suggest" in pkg:  # a release for some of the targets in rejected
+            assert set(pkg["suggest"]) <= set(pkg["rejected"]) and all(
+                isinstance(v, str) for v in pkg["suggest"].values()
+            )
     for item in data["skipped"]:
         assert set(item) == {"name", "reason"}
         assert isinstance(item["name"], str) and isinstance(item["reason"], str)

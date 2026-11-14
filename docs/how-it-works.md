@@ -92,15 +92,16 @@ points the JSON API lookups at a mirror; see [Pipfile.lock](inputs.md#pipfileloc
 ## Which package names leave the run {#pypi-origin}
 
 !!! note "After 0.9.0"
-    `--conda-forge`, `--notes` and `--build-info` are not in 0.9.0.
+    `--conda-forge`, `--notes`, `--build-info` and `--suggest` are not in 0.9.0.
 
-Three opt-in flags send the names of packages with gaps somewhere other than the index: `--conda-forge` to
-anaconda.org, `--notes` to wheelgap.github.io, and `--build-info` to PyPI's file host, for the sdist. A name from a
-private index must never leave the run, so all three send a package's name only when wheelgap knows the package is
-PyPI's. That's one rule, shared by the three, and it holds when all of these do:
+Four opt-in flags send the names of packages with gaps somewhere other than the index: `--conda-forge` to
+anaconda.org, `--notes` to wheelgap.github.io, `--build-info` to PyPI's file host, for the sdist, and `--suggest` to
+PyPI's JSON API, for the package's list of releases. A name from a private index must never leave the run, so all four
+send a package's name only when wheelgap knows the package is PyPI's. That's one rule, shared by the four, and it holds
+when all of these do:
 
 - **Lookups go to pypi.org:** no `--index-url` (or `index-url` in `[tool.wheelgap]`) and no `WHEELGAP_INDEX_URL`
-  pointing at another index. With either, none of the three sends anything, and a note on stderr says so.
+  pointing at another index. With either, none of the four sends anything, and a note on stderr says so.
 - **The package comes from an index:** not a Git, path, URL, editable or conda package, and not one already skipped
   as `private index`.
 - **No other input of the run says otherwise:** when a run has several inputs and any of them places a name
@@ -133,6 +134,8 @@ use these flags (or set one of the variables above).
 Each flag then adds its own limits:
 
 - **`--conda-forge`** follows the rule as it is, and a note on stderr names the packages it didn't look up.
+- **`--suggest`** follows the rule as it is too, with the same note, and is refused with `--offline` (or
+  `offline = true`).
 - **`--notes`** takes the recorded-index route only from `uv.lock` and `pylock.toml`, and is off with `--offline`
   (or `offline = true`).
 - **`--build-info`** is off for the whole run when an environment variable above is set, as well as with
