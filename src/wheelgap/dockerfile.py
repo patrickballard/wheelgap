@@ -733,7 +733,8 @@ def parse_image(image: str, platform: str | None = None) -> ImageTarget:
         if name == UV_IMAGE and arch not in UV_ARCHES:
             raise DockerfileError(f"{image}: Astral's uv images are only published for linux/amd64 and linux/arm64")
         if name in IMAGE_NAMES and release in DEBIAN_ARCHES:
-            frozen = not minor_tag or (python, release) in OLD_DEBIAN_TAGS
+            # An X.Y-rc tag may be live or long stale, so it gets only the arches both kinds are published for.
+            frozen = not _MINOR_TAG_RE.match(tag) or (python, release) in OLD_DEBIAN_TAGS
             if arch not in (OLD_DEBIAN_ARCHES if frozen else DEBIAN_ARCHES[release]):
                 if UNTAGGED_DEBIAN.get(python) == "trixie":
                     hint = f" ({python}-trixie is)"  # the X.Y tag: a patch tag has no trixie twin

@@ -53,6 +53,7 @@ from wheelgap.dockerfile import (
         ("python:3.16-rc-slim-trixie", ImageTarget("3.16", "linux-x86_64", glibc="2.41")),
         ("--platform=linux/arm64 python:3.16-rc-slim-trixie", ImageTarget("3.16", "linux-aarch64", glibc="2.41")),
         ("python:3.16-rc-bookworm", ImageTarget("3.16", "linux-x86_64", glibc="2.36")),
+        ("--platform=linux/ppc64le python:3.16-rc-bookworm", ImageTarget("3.16", "linux-ppc64le", glibc="2.36")),
         ("ghcr.io/astral-sh/uv:python3.13-bookworm-slim", ImageTarget("3.13", "linux-x86_64", glibc="2.36")),
         ("ghcr.io/astral-sh/uv:python3.14-trixie-slim", ImageTarget("3.14", "linux-x86_64", glibc="2.41")),
         ("ghcr.io/astral-sh/uv:0.13.7-python3.13-trixie-slim", ImageTarget("3.13", "linux-x86_64", glibc="2.41")),
@@ -101,6 +102,13 @@ def test_parse_from(line, expected):
         ("python:3.16-rc-nonsense", "unknown image variant 'nonsense'"),
         ("python:3.16-rc1", "unknown image variant 'rc1'"),
         ("ghcr.io/astral-sh/uv:python3.16-rc-alpine", r"must specify a Python version like python3\.13-alpine"),
+        # An X.Y-rc tag isn't read as frozen: a live one (3.16-rc-bookworm) has only the arches bookworm has today
+        ("--platform=linux/s390x python:3.16-rc-bookworm", "isn't published for linux/s390x$"),
+        (
+            "--platform=linux/ppc64le python:3.13-rc-slim-bullseye",
+            r"isn't published for linux/ppc64le \(3\.13-trixie is\)$",
+        ),
+        ("--platform=linux/riscv64 python:3.16-rc-bookworm", "isn't published for linux/riscv64$"),
         ("--platform=linux/riscv64 python:3.13-bookworm", r"python:3\.13-bookworm isn't published for linux/riscv64"),
         (
             "--platform=linux/riscv64 python:3.13-slim-bookworm",
