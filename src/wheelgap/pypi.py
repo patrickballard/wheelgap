@@ -612,9 +612,7 @@ def _fill_simple_data(pkg: Package, data: dict, python: str | None) -> Package:
             pkg.files = [e["filename"] for e in live_entries]
             pkg.yanked = frozenset(e["filename"] for e in live_entries if _is_yanked(e))
             pkg.requires_python_rejected = {
-                e["filename"]: f"requires Python {e['requires-python']}"
-                for e in rejected_entries
-                if e["filename"].endswith(".whl")
+                e["filename"]: f"requires Python {e['requires-python']}" for e in rejected_entries
             }
             return pkg
 
@@ -742,7 +740,9 @@ def fill(
         return pkg
     _resolve_pythons(pkg, pythons, lambda p, py: _fill_json_data(p, data, py, base), python)
     # Only a fresh, valid pinned response is cached; a range is resolved anew on every run.
-    if key and write_cache and cached is None and not pkg.error and isinstance(data.get("urls"), list):
+    # With several Pythons the error is on each resolution, not on pkg.
+    valid = not any(p.error for p in pkg.variants) and isinstance(data, dict) and isinstance(data.get("urls"), list)
+    if key and write_cache and cached is None and valid:
         cache.save_files(*key, _files(data["urls"]))
     return pkg
 
@@ -768,11 +768,7 @@ def _fill_json_data(pkg: Package, data: dict, python: str | None, base: str) -> 
             rejected = [u for u in urls if not _supports_python(u, python)]
             pkg.files = [u["filename"] for u in live]
             pkg.yanked = frozenset(u["filename"] for u in live if u.get("yanked"))
-            pkg.requires_python_rejected = {
-                u["filename"]: f"requires Python {u['requires_python']}"
-                for u in rejected
-                if u["filename"].endswith(".whl")
-            }
+            pkg.requires_python_rejected = {u["filename"]: f"requires Python {u['requires_python']}" for u in rejected}
         else:
             urls = _files(data.get("urls", []))
             info = data.get("info")

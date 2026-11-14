@@ -9,6 +9,7 @@ from conftest import FAKE_INDEX
 
 import wheelgap
 from wheelgap import Status, pypi
+from wheelgap.check import explain, explain_lines
 from wheelgap.cli import main
 from wheelgap.pyodide import PyodideLockError, load_pyodide_lock
 from wheelgap.sources import Package, SourceError, load_inputs
@@ -737,3 +738,32 @@ def test_fill_all_reports_progress_only_when_asked(fake_pypi):
     seen.clear()
     pypi.fill_all([Package("winonly", "311")])  # outside the context nothing is reported, as in the CLI
     assert seen == []
+
+
+@pytest.mark.parametrize("data", [[], {"urls": [{"filename": 1}]}])
+def test_malformed_pin_for_several_pythons_is_unknown_and_not_cached(monkeypatch, lookup_cache, data):
+    # Each Python's resolution records the error, so the cache write mustn't read the response as valid
+    monkeypatch.setattr(pypi, "fetch_json", lambda url, timeout=20.0: data)
+    pkg = pypi.fill(Package("x", "1.0"), write_cache=True, pythons=("3.9", "3.13"))
+    assert {p.error for p in pkg.resolutions.values()} == {"unexpected response from the index"}
+    assert not list(lookup_cache.glob("*.json"))
+
+
+def test_pin_requires_python_explains_the_sdist(monkeypatch):
+    data = {"urls": [{"filename": "x-1.0.tar.gz", "requires_python": ">=3.10"}]}
+    monkeypatch.setattr(pypi, "fetch_json", lambda url, timeout=20.0: data)
+    pkg = pypi.fill(Package("x", "1.0"), python="3.9")
+    assert pkg.files == [] and pkg.requires_python_rejected == {"x-1.0.tar.gz": "requires Python >=3.10"}
+    (target,) = wheelgap.make_targets(python="3.9", platforms="linux-x86_64")
+    assert explain_lines(pkg.files, target, requires_python_rejected=pkg.requires_python_rejected) == [
+        "no wheels published for this version",
+        "there is an sdist, but it requires Python >=3.10",
+    ]
+
+
+def test_pin_requires_python_reason_only_for_wheels_the_target_fits():
+    (target,) = wheelgap.make_targets(python="3.9", platforms="linux-x86_64")
+    fits, other = "x-1.0-py3-none-any.whl", "x-1.0-cp39-cp39-win_amd64.whl"
+    reasons = dict(explain([], target, frozenset(), dict.fromkeys((fits, other), "requires Python >=3.10")))
+    assert reasons[fits] == "requires Python >=3.10"
+    assert reasons[other] != "requires Python >=3.10"

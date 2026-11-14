@@ -273,8 +273,8 @@ def explain(
             out.append((f, reason))
     if requires_python_rejected:
         for f, reason in requires_python_rejected.items():
-            if f.endswith(".whl"):
-                out.append((f, reason))
+            if f.endswith(".whl"):  # a wheel the target can't use anyway says why, not that a newer Python fits
+                out.append((f, rejection(f, target) or reason))
     return sorted(out, key=lambda fr: _closeness(fr[0], target))
 
 
@@ -307,6 +307,9 @@ def explain_lines(
         out.append(dim(f"… and {len(rejected) - len(shown)} more (--json lists them all)"))
     if not target.builds_sdists and has_sdist(files):
         out.append(dim(f"there is an sdist, but {target.platform} can't build packages from source"))
+    for f, reason in (requires_python_rejected or {}).items():
+        if f.endswith(SDIST_SUFFIXES):
+            out.append(dim(f"there is an sdist, but it {reason}"))
     return out
 
 

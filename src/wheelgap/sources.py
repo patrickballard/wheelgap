@@ -71,7 +71,7 @@ class Package:
     # A range or pin resolved for several Python major.minors. Each value owns only that Python's eligible files.
     # Identical resolutions share a Package, so reports can keep one row for them.
     resolutions: dict[str, Package] = field(default_factory=dict)
-    # Wheels whose Requires-Python excluded the target Python, mapped to their --explain reason.
+    # Files of a pinned release whose Requires-Python excludes the target Python, mapped to their --explain reason.
     requires_python_rejected: dict[str, str] = field(default_factory=dict)
 
     @property

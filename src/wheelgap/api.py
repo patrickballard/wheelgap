@@ -86,7 +86,7 @@ class Result:
     via: dict[Target, tuple[str, ...]] = field(default_factory=dict)
     # Files of a pinned release that the index marks as yanked: pip skips them when the release has others it can use.
     yanked: frozenset[str] = frozenset()
-    # Wheels whose Requires-Python excluded the target Python, mapped to their --explain reason.
+    # Files of a pinned release whose Requires-Python excludes the target Python, mapped to their --explain reason.
     requires_python_rejected: dict[str, str] = field(default_factory=dict)
 
     @property
