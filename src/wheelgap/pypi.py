@@ -248,6 +248,27 @@ def fetch_json(
         return _request(req, timeout, attempts, lambda resp: json.loads(_read_capped(resp, max_bytes)))
 
 
+# A project's JSON API page lists every file of every release: grpcio's is about 10 MB, numpy's about 4 MB.
+RELEASES_MAX_BYTES = 32 * 1024 * 1024
+
+
+def fetch_releases(key: str, timeout: float = 10.0, deadline: float | None = None) -> dict:
+    """--suggest: the `releases` mapping (version -> file list) of the project page `{index}/{key}/json`, where `key`
+    is the canonical name. Tried once, and capped at RELEASES_MAX_BYTES; ValueError when the answer has no release
+    list (a mirror may leave it out)."""
+    data = fetch_json(
+        f"{index_url()}/{quote(key)}/json",
+        timeout=timeout,
+        attempts=1,
+        max_bytes=RELEASES_MAX_BYTES,
+        deadline=deadline,
+    )
+    releases = data.get("releases") if isinstance(data, dict) else None
+    if not isinstance(releases, dict):
+        raise ValueError("no release list")
+    return releases
+
+
 # --explain --build-info reads sdists (see build.py). Past any of these caps an sdist gives no answer.
 SDIST_MAX_BYTES = 64 * 1024 * 1024  # downloaded (numpy's sdist is 19 MiB)
 SDIST_MAX_UNPACKED = 512 * 1024 * 1024  # of tar unpacked from them
