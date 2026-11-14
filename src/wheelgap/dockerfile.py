@@ -741,6 +741,11 @@ def parse_image(image: str, platform: str | None = None) -> ImageTarget:
                     hint = f" ({python}-bookworm is)"
                 else:
                     hint = ""
+                if m.group(3) and arch in OLD_DEBIAN_ARCHES:  # 3.14-rc-bookworm has s390x, 3.15-rc-bookworm doesn't
+                    raise DockerfileError(
+                        f"{image} may not be published for {platform}: an -rc tag that stopped being rebuilt early "
+                        f"still has it, a newer one doesn't{hint}"
+                    )
                 raise DockerfileError(f"{image} isn't published for {platform}{hint}")
     return ImageTarget(python, f"{family}-{arch}", glibc, musl)
 
