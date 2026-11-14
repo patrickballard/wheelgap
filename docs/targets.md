@@ -174,9 +174,9 @@ stages like `FROM base AS runtime` back to the image they start from. `-p`, `-t`
 command line still win, and the image wins over `[tool.wheelgap]`.
 
 A python X.Y tag without a Debian release (`python:3.13-slim`) is read as the release Docker Hub currently builds it
-on (trixie, glibc 2.41, for 3.9 and later); patch tags like `3.12.7-slim` keep the `--glibc` default. Pin `-bookworm`
-or `-trixie` for an answer that doesn't move. A Dockerfile wheelgap can't read the way Docker does is an error, not a
-guess.
+on (trixie, glibc 2.41, for 3.9 and later); patch tags like `3.12.7-slim` and pre-release tags like `3.16-rc-slim`
+keep the `--glibc` default. Pin `-bookworm` or `-trixie` for an answer that doesn't move. A Dockerfile wheelgap can't
+read the way Docker does is an error, not a guess.
 
 ## Suggest targets from your CI and Dockerfiles {#suggest-targets}
 
