@@ -254,8 +254,30 @@ def test_private_names_judges_a_range_by_its_resolutions():
     ranged = Package("nowheels", None, spec=">=0.1", resolutions={"3.13": resolved, "3.14": resolved})
     source = Source("command line", [ranged], pypi_only=True)
     assert origin.private_names([source], env=EMPTY) == frozenset()
+    # A Python with no matching release is an error, not another index: the name is still pypi.org's.
+    ranged.resolutions["3.9"] = Package("nowheels", None, spec=">=0.1", error="no release matches >=0.1 for Python 3.9")
+    assert origin.private_names([source], env=EMPTY) == frozenset()
     resolved.found_on_pypi = False
     assert origin.private_names([source], env=EMPTY) == {"nowheels"}
+
+
+def test_private_names_include_what_a_group_selection_left_out():
+    # poetry.lock --no-dev drops the package but the lock still places it somewhere wheelgap no longer knows.
+    lock = Source("poetry.lock", [], unselected_keys={"nowheels"})
+    pkg = Package("nowheels", "0.9", found_on_pypi=True)
+    reqs = Source("requirements.txt", [pkg], pypi_only=True)
+    private = origin.private_names([lock, reqs], env=EMPTY)
+    assert private == {"nowheels"} and not origin.known_pypi(pkg, reqs, env=EMPTY, private=private)
+
+
+def test_private_names_include_a_name_a_lock_cant_place(fake_pypi, tmp_path):
+    # pdm.lock records no index, so a requirements file's nowheels beside it is kept in too.
+    (tmp_path / "pdm.lock").write_text(PDM_LOCK, encoding="utf-8")
+    (tmp_path / "b").mkdir()
+    (tmp_path / "b" / "requirements.txt").write_text("nowheels==0.9\n", encoding="utf-8")
+    sources = load_inputs([str(tmp_path / "pdm.lock"), str(tmp_path / "b" / "requirements.txt")])
+    pypi.fill_all([p for s in sources for p in s.packages])
+    assert origin.private_names(sources, env=EMPTY) == {"nowheels"}
 
 
 def test_private_names_with_another_index_is_every_name():

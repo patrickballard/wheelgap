@@ -59,17 +59,20 @@ def private_names(
     sources: Iterable[Source], env: Mapping[str, str] = os.environ, simple_index: str | None = None
 ) -> frozenset[str]:
     """The canonical names that some input of the run doesn't place on PyPI: known_pypi is false for the package
-    there (a private index, git, a path, a lock that records no index, ...). The same name in another input may be
-    that same private package, so pass these as known_pypi's `private` to keep the name in for every input. Call it
-    after the run's lookups, which set Package.found_on_pypi."""
-    return frozenset(
-        p.key
-        for s in sources
-        for original in s.packages
-        # A range resolved per Python is judged by its resolutions: the lookups mark those, not the range itself.
-        for p in (original.resolutions.values() or (original,))
-        if not known_pypi(p, s, env, simple_index)
-    )
+    there (a private index, git, a path, a lock that records no index, ...), or the input read the package and a
+    group or extras selection left it out (Source.unselected_keys, which keeps no index). The same name in another
+    input may be that same private package, so pass these as known_pypi's `private` to keep the name in for every
+    input. Call it after the run's lookups, which set Package.found_on_pypi."""
+    names: set[str] = set()
+    for s in sources:
+        names |= s.unselected_keys
+        for original in s.packages:
+            # A range resolved per Python is judged by its resolutions: the lookups mark those, not the range itself.
+            # One that pypi.org answered places the name there, even if another Python found no matching release.
+            resolved = original.resolutions.values() or (original,)
+            if not any(known_pypi(p, s, env, simple_index) for p in resolved):
+                names.add(original.key)
+    return frozenset(names)
 
 
 def known_pypi(
