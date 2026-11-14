@@ -300,6 +300,13 @@ def test_conda_forge_keeps_a_name_another_input_places_on_a_private_index(capsys
     assert "didn't look up 1 package whose index isn't known to be PyPI (nowheels)" in err
 
 
+def test_conda_forge_note_counts_two_spellings_of_a_name_once(capsys, fake_pypi, tmp_path):
+    lock, reqs = two_inputs(tmp_path)
+    (tmp_path / "b" / "requirements.txt").write_text("NoWheels==0.9\n", encoding="utf-8")
+    _, _, err = run(capsys, lock, reqs, "-t", "linux-aarch64", *EXPLAIN, "--conda-forge")
+    assert conda_calls(fake_pypi) == [] and "didn't look up 1 package whose index isn't known to be PyPI" in err
+
+
 def test_notes_keep_a_name_another_input_places_on_a_private_index(capsys, fake_pypi, tracker, tmp_path):
     lock, reqs = two_inputs(tmp_path)
     tracker.add("nowheels", note())

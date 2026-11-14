@@ -1183,15 +1183,16 @@ def conda_forge_hints(
             file=sys.stderr,
         )
     source_of = {id(p): s for s in sources for original in s.packages for p in original.variants}
-    asked, private = [], []
+    asked: list[Row] = []
+    kept_in: dict[str, str] = {}  # by canonical name, so two spellings of one package count once
     for r in gaps:
         if r.package.version and condaforge.wanted(gap_targets(r, targets)):
             if origin.known_pypi(r.package, source_of[id(r.package)], simple_index=index_url, private=elsewhere):
                 asked.append(r)
             else:
-                private.append(r.package.name)
-    if private and other is None and not quiet:
-        private = list(dict.fromkeys(private))
+                kept_in.setdefault(r.package.key, r.package.name)
+    if kept_in and other is None and not quiet:
+        private = list(kept_in.values())
         print(
             f"wheelgap: note: --conda-forge didn't look up {len(private)} package{'s' * (len(private) != 1)} "
             f"whose index isn't known to be PyPI ({_names(private)}), so their names stay private",
