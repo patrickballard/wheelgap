@@ -102,6 +102,9 @@ PyPI's. That's one rule, shared by the three, and it holds when all of these do:
   pointing at another index. With either, none of the three sends anything, and a note on stderr says so.
 - **The package comes from an index:** not a Git, path, URL, editable or conda package, and not one already skipped
   as `private index`.
+- **No other input of the run says otherwise:** when a run has several inputs and any of them places a name
+  somewhere other than PyPI (or can't place it), that name isn't sent for the other inputs either. An `acme-secret`
+  on a private index in `a/uv.lock` keeps the `acme-secret==1.0` in `b/requirements.txt` in, too.
 - **And either** its lock records its index as exactly `https://pypi.org/simple` (a `uv.lock` registry or a
   `pylock.toml` index; a `poetry.lock` legacy source or a `pixi.lock` index with that exact URL counts too, except for
   `--notes`), **or** this run looked it up and found it on pypi.org, and nothing points pip or uv at another index:

@@ -1,10 +1,23 @@
 """origin.known_pypi: whether a package is positively PyPI's, read from each kind of input."""
 
 import pytest
-from test_conda_forge import PDM_LOCK, PIPFILE_CORP, PIPFILE_PYPI, POETRY_LOCK, PYPROJECT, pylock, uv_lock
+from test_build import nowheels_sdist
+from test_cli import run
+from test_conda_forge import (
+    API,
+    PDM_LOCK,
+    PIPFILE_CORP,
+    PIPFILE_PYPI,
+    POETRY_LOCK,
+    PYPROJECT,
+    conda_calls,
+    pylock,
+    uv_lock,
+)
+from test_notes import note
 from test_sources import PIXI_V6
 
-from wheelgap import origin, pypi
+from wheelgap import notes, origin, pypi
 from wheelgap.sources import Package, Source, load_inputs
 
 EMPTY: dict[str, str] = {}
@@ -208,3 +221,82 @@ def test_the_default_environment_is_os_environ(monkeypatch):
     assert origin.known_pypi(pkg, source)
     monkeypatch.setenv("UV_INDEX", "corp=https://pypi.corp.example/simple")
     assert not origin.known_pypi(pkg, source)
+
+
+# #262: a name is private for the whole run when any input places it somewhere other than PyPI.
+
+
+def two_inputs(tmp_path):
+    """a/uv.lock places nowheels on a private index; b/requirements.txt pins the same name, which pypi.org has too."""
+    lock, reqs = tmp_path / "a" / "uv.lock", tmp_path / "b" / "requirements.txt"
+    for path, text in ((lock, uv_lock("https://pkgs.acme.example/simple")), (reqs, "nowheels==0.9\npurewheel==3.1\n")):
+        path.parent.mkdir()
+        path.write_text(text, encoding="utf-8")
+    return str(lock), str(reqs)
+
+
+def test_private_names_are_private_in_every_input(fake_pypi, tmp_path):
+    sources = load_inputs(list(two_inputs(tmp_path)))
+    pypi.fill_all([p for s in sources for p in s.packages])
+    reqs = next(s for s in sources if s.requirements)
+    nowheels, purewheel = (next(p for p in reqs.packages if p.key == name) for name in ("nowheels", "purewheel"))
+    assert origin.known_pypi(nowheels, reqs, env=EMPTY)  # going by its own input alone
+    private = origin.private_names(sources, env=EMPTY)
+    assert "nowheels" in private and "purewheel" not in private
+    assert not origin.known_pypi(nowheels, reqs, env=EMPTY, private=private)
+    assert origin.known_pypi(purewheel, reqs, env=EMPTY, private=private)
+    assert "nowheels" not in origin.private_names([reqs], env=EMPTY)  # the requirements file alone
+
+
+def test_private_names_judges_a_range_by_its_resolutions():
+    # The lookups mark each Python's resolution as found on pypi.org, not the range they were resolved from.
+    resolved = Package("nowheels", "0.9", found_on_pypi=True)
+    ranged = Package("nowheels", None, spec=">=0.1", resolutions={"3.13": resolved, "3.14": resolved})
+    source = Source("command line", [ranged], pypi_only=True)
+    assert origin.private_names([source], env=EMPTY) == frozenset()
+    resolved.found_on_pypi = False
+    assert origin.private_names([source], env=EMPTY) == {"nowheels"}
+
+
+def test_private_names_with_another_index_is_every_name():
+    pkg = Package("nowheels", "0.9", registry="https://pypi.org/simple")
+    sources = [Source("uv.lock", [pkg])]
+    assert origin.private_names(sources, env=EMPTY) == frozenset()
+    assert origin.private_names(sources, env=EMPTY, simple_index="https://x.example/simple") == {"nowheels"}
+
+
+EXPLAIN = ("-p", "3.13", "--explain", "--no-cache")
+
+
+def test_conda_forge_keeps_a_name_another_input_places_on_a_private_index(capsys, fake_pypi, tmp_path):
+    lock, reqs = two_inputs(tmp_path)
+    _, out, err = run(capsys, reqs, "-t", "linux-aarch64", *EXPLAIN, "--conda-forge")
+    assert conda_calls(fake_pypi) == [API + "nowheels"] and "didn't look up" not in err  # alone, it's PyPI's
+    fake_pypi.clear()
+    _, out, err = run(capsys, lock, reqs, "-t", "linux-aarch64", *EXPLAIN, "--conda-forge")
+    assert conda_calls(fake_pypi) == [] and "conda-forge has" not in out
+    assert "didn't look up 1 package whose index isn't known to be PyPI (nowheels)" in err
+
+
+def test_notes_keep_a_name_another_input_places_on_a_private_index(capsys, fake_pypi, tracker, tmp_path):
+    lock, reqs = two_inputs(tmp_path)
+    tracker.add("nowheels", note())
+    run(capsys, reqs, "-t", "linux-x86_64", *EXPLAIN, "--notes")
+    assert tracker.calls == [f"{notes.TRACKER}/nowheels.json"]  # alone, it's PyPI's
+    tracker.calls.clear()
+    _, out, _ = run(capsys, lock, reqs, "-t", "linux-x86_64", *EXPLAIN, "--notes")
+    assert tracker.calls == [] and "note from the wheelgap tracker" not in out
+    _, _, err = run(capsys, lock, reqs, "-t", "linux-x86_64", *EXPLAIN)
+    assert "add --notes" not in err  # and no suggestion to send it
+
+
+def test_build_info_keeps_a_name_another_input_places_on_a_private_index(capsys, fake_pypi, fake_files, tmp_path):
+    lock, reqs = two_inputs(tmp_path)
+    fake_files.files["nowheels-0.9.tar.gz"] = nowheels_sdist(tmp_path)
+    _, out, _ = run(capsys, reqs, "-t", "linux-x86_64", *EXPLAIN, "--build-info")
+    assert "build needs: at least a Rust toolchain" in out and fake_files.calls  # alone, it's PyPI's
+    fake_files.calls.clear()
+    fake_pypi.clear()
+    _, out, _ = run(capsys, lock, reqs, "-t", "linux-x86_64", *EXPLAIN, "--build-info")
+    assert "build needs" not in out and fake_files.calls == []
+    assert fake_pypi.count("https://pypi.org/pypi/nowheels/0.9/json") == 1  # the check itself; none for the sdist
