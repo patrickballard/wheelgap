@@ -1623,7 +1623,7 @@ def test_pixi_lock_that_isnt_utf8(tmp_path):
 )
 def test_requirements_binary_format_control(tmp_path, lines, expected):
     req = tmp_path / "requirements.txt"
-    req.write_text(lines, encoding="utf-8")
+    req.write_bytes(lines.encode())  # as written: write_text would turn \r\n into \r\r\n on Windows
     pkgs = by_name(parse_requirements(req))
     assert {name: (pkgs[name].no_binary, pkgs[name].only_binary) for name in expected} == expected
 
