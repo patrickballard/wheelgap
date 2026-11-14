@@ -1656,3 +1656,22 @@ def test_requirements_binary_format_control_reapplied_on_repeated_includes(tmp_p
         "fastlib": (True, False),
         "nowheels": (False, True),
     }
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("--no-b :all:", (True, False)),
+        ("--no-bin=:all:", (True, False)),
+        ("--only-b :all:", (False, True)),
+        ("--o=:all:", (False, True)),
+        ("--no- :all:", (False, False)),  # --no-index too: pip refuses it
+        ("--only-final", (False, False)),
+    ],
+)
+def test_requirements_binary_options_abbreviated(tmp_path, line, expected):
+    # optparse, which reads pip's requirements files, takes an unambiguous prefix of a long option
+    req = tmp_path / "requirements.txt"
+    req.write_text(f"{line}\nsix==1.16.0\n", encoding="utf-8")
+    (six,) = parse_requirements(req).packages
+    assert (six.no_binary, six.only_binary) == expected

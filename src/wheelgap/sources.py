@@ -1266,7 +1266,18 @@ def _join_continued_lines(text: str) -> list[str]:
     return joined
 
 
-_FORMAT_OPT_RE = re.compile(r"^(--no-binary|--only-binary)(?:=(.*))?$", re.DOTALL)
+def _format_option(token: str) -> tuple[str, str | None] | None:
+    """--no-binary or --only-binary and its =VALUE, if any, from an option token. optparse accepts unambiguous
+    prefixes: --no-b on (--no- is also --no-index), and --o on for --only-binary (pip 26's --only-final makes that
+    --only-b, but older pips take the shorter ones)."""
+    option, eq, value = token.partition("=")
+    if option.startswith("--no-b") and "--no-binary".startswith(option):
+        name = "--no-binary"
+    elif option.startswith("--o") and "--only-binary".startswith(option):
+        name = "--only-binary"
+    else:
+        return None
+    return name, value if eq else None
 
 
 def _apply_format_options(line: str, format_control: _FormatControl) -> bool:
@@ -1280,12 +1291,13 @@ def _apply_format_options(line: str, format_control: _FormatControl) -> bool:
         return False
     i = 0
     while i < len(tokens):
-        m = _FORMAT_OPT_RE.match(tokens[i])
-        if not m:
+        found = _format_option(tokens[i])
+        if not found:
             i += 1
             continue
-        if m.group(2) is not None:
-            val = m.group(2)
+        option, given = found
+        if given is not None:
+            val = given
             i += 1
         elif i + 1 < len(tokens):
             val = tokens[i + 1]
@@ -1293,7 +1305,7 @@ def _apply_format_options(line: str, format_control: _FormatControl) -> bool:
         else:
             break
         if val:
-            format_control.apply(m.group(1), val)
+            format_control.apply(option, val)
     return True
 
 
