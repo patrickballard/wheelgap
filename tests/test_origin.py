@@ -280,6 +280,17 @@ def test_private_names_include_a_name_a_lock_cant_place(fake_pypi, tmp_path):
     assert origin.private_names(sources, env=EMPTY) == {"nowheels"}
 
 
+def test_private_names_include_a_pixi_conda_package():
+    # A pixi.lock conda package isn't placed on PyPI (its channel may be private), so its PyPI namesake in another
+    # input is kept in too.
+    lock = Source("pixi.lock", [Package("nowheels", "0.9", skip="conda")])
+    pkg = Package("nowheels", "0.9", found_on_pypi=True)
+    reqs = Source("requirements.txt", [pkg], pypi_only=True)
+    assert origin.known_pypi(pkg, reqs, env=EMPTY)  # going by its own input alone
+    private = origin.private_names([lock, reqs], env=EMPTY)
+    assert private == {"nowheels"} and not origin.known_pypi(pkg, reqs, env=EMPTY, private=private)
+
+
 def test_private_names_cover_another_entry_of_the_same_input():
     # One uv.lock that forks a name between pypi.org and another index: the pypi.org entry is kept in too.
     on_pypi = Package("nowheels", "0.9", registry="https://pypi.org/simple")
